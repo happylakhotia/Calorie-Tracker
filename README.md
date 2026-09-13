@@ -5,7 +5,7 @@ NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking
 ---
 
 ## 📑 Table of Contents
-- [✨ Features](#-features)
+- [Features](#-features)
   - [Core Tracking & Health Goals](#core-tracking--health-goals)
   - [Interactive Habit Loop & Time Travel](#interactive-habit-loop--time-travel)
   - [Visual Reports & Analytics](#visual-reports--analytics)
@@ -21,7 +21,7 @@ NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking
 
 ---
 
-## ✨ Features
+## Features
 
 ### Core Tracking & Health Goals
 - **Personal Health Goals**: Set daily calorie targets, macronutrient goals (protein, carbs, and fat in grams), target body weight (kg), target completion date, and coaching notes.
@@ -208,7 +208,7 @@ sequenceDiagram
 
     alt Redis Cache HIT
         Redis-->>Server: Return cached nutrition JSON
-        Server-->>User: ⚡ Instant Response (source: redis_cache, $0 AI cost)
+        Server-->>User:  Instant Response (source: redis_cache, $0 AI cost)
     else Redis Cache MISS
         Server->>DB: Check FileUpload table: (userId, fileHash)
         alt Database HIT (Duplicate)
@@ -344,7 +344,7 @@ REFRESH_TOKEN_EXPIRES_DAYS=30
 
 ---
 
-## ⚙️ Setup & Installation
+## Setup & Installation
 
 ### Prerequisites
 - Node.js ≥ 18
