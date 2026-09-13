@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, Edit2, Trash2, Droplets, Target, Sparkles, Camera, TrendingUp } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { entryApi, goalApi } from '../api';
+import { entryApi, goalApi, reportApi } from '../api';
 import { fmtCal, fmt, getApiError, today } from '../utils/helpers';
 import FoodEntryModal from '../components/FoodEntryModal';
 import AIPhotoUpload from '../components/AIPhotoUpload';
@@ -52,7 +52,7 @@ const T = {
 // Week day labels for habit loop
 const WEEK_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-const HYDRATION_KEY = () => `nutritrack_hydration_${today()}`;
+const HYDRATION_KEY = (d = today()) => `nutritrack_hydration_${d}`;
 const TOTAL_GLASSES = 8; // 8 × 250ml = 2000ml shown in row
 
 // ── Smart food emoji matcher ──────────────────────────────────────────────────
@@ -103,18 +103,38 @@ function getGreeting() {
 }
 
 // ── Calorie Ring (large) ──────────────────────────────────────────────────────
-function CalorieRing({ value, target, size = 120, stroke = 10 }) {
+function CalorieRing({ value, target, size = 130, stroke = 10 }) {
   const pct = target > 0 ? Math.min((value / target) * 100, 100) : 0;
   const r = (size - stroke) / 2;
   const circ = 2 * Math.PI * r;
   const offset = circ - (pct / 100) * circ;
   return (
     <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
-      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={`${T.primary}18`} strokeWidth={stroke} />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={T.primary} strokeWidth={stroke}
-          strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
-          style={{ transition: 'stroke-dashoffset 1s ease' }} />
+      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)', overflow: 'visible' }}>
+        {/* Full outer track ring visible by default */}
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="oklch(0.48 0.098 155 / 0.18)"
+          strokeWidth={stroke}
+        />
+        {/* Active progress ring */}
+        {pct > 0 && (
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            stroke={T.primary}
+            strokeWidth={stroke}
+            strokeDasharray={circ}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 0.8s ease' }}
+          />
+        )}
       </svg>
       <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
         <span style={{ fontSize: 24, fontWeight: 900, color: T.text, lineHeight: 1 }}>{fmtCal(value)}</span>
@@ -136,19 +156,17 @@ function MacroBar({ label, value, target, unit, color }) {
         <span style={{ fontWeight: 600, color: T.text }}>{label}</span>
         <span style={{ color: T.muted }}>{value} / {target} {unit}</span>
       </div>
-      <div style={{ height: 7, borderRadius: 99, background: `${color}20` }}>
+      <div style={{ height: 7, borderRadius: 99, background: `color-mix(in srgb, ${color} 18%, transparent)` }}>
         <div style={{ height: '100%', width: `${pct}%`, borderRadius: 99, background: color, transition: 'width 0.6s ease' }} />
       </div>
     </div>
   );
 }
 
-// ── Source badge ──────────────────────────────────────────────────────────────
-
 // ── Micro bar ─────────────────────────────────────────────────────────────────
 function MicroBar({ pct, color }) {
   return (
-    <div style={{ height: 4, borderRadius: 99, background: `${color}20`, flex: 1 }}>
+    <div style={{ height: 4, borderRadius: 99, background: `color-mix(in srgb, ${color} 18%, transparent)`, flex: 1 }}>
       <div style={{ height: '100%', width: `${Math.min(pct, 100)}%`, borderRadius: 99, background: color, transition: 'width 0.5s ease' }} />
     </div>
   );
@@ -157,6 +175,9 @@ function MicroBar({ pct, color }) {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const { user } = useAuth();
+  const [selectedDate, setSelectedDate] = useState(today());
+  const [dayLoading, setDayLoading] = useState(false);
+  const [weeklySummary, setWeeklySummary] = useState([]);
   const [todayData, setTodayData] = useState(null);
   const [goal, setGoal] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -173,17 +194,39 @@ export default function DashboardPage() {
   const [editingWeight, setEditingWeight] = useState(false);
   const [weightInput, setWeightInput] = useState('');
   const [hydration, setHydration] = useState(() => {
-    const s = localStorage.getItem(HYDRATION_KEY());
+    const s = localStorage.getItem(HYDRATION_KEY(today()));
     return s ? parseFloat(s) : 0;
   });
   const navigate = useNavigate();
 
-  const fetchData = useCallback(async () => {
+  // Helper to calculate Monday through Sunday bounds of the current week
+  const getWeekBounds = useCallback(() => {
+    const now = new Date();
+    const currentDay = now.getDay(); // 0=Sun, 1=Mon...
+    const distToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + distToMonday);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    return {
+      startDate: monday.toISOString().split('T')[0],
+      endDate: sunday.toISOString().split('T')[0],
+    };
+  }, []);
+
+  const fetchData = useCallback(async (targetDate = selectedDate) => {
     try {
-      const [a, b] = await Promise.all([entryApi.getToday(), goalApi.getActive()]);
-      setTodayData(a.data.data);
-      const activeGoal = b.data.data;
+      const { startDate, endDate } = getWeekBounds();
+      const [dayRes, goalRes, weeklyRes] = await Promise.all([
+        entryApi.getByDate(targetDate),
+        goalApi.getActive(),
+        reportApi.weeklyCalories({ startDate, endDate }).catch(() => ({ data: { data: [] } })),
+      ]);
+      setTodayData(dayRes.data.data);
+      const activeGoal = goalRes.data.data;
       setGoal(activeGoal);
+      setWeeklySummary(weeklyRes.data?.data || []);
+
       const saved = localStorage.getItem('nutritrack_current_weight');
       if (saved) {
         setCurrentWeight(parseFloat(saved));
@@ -192,10 +235,31 @@ export default function DashboardPage() {
         localStorage.setItem('nutritrack_current_weight', activeGoal.weightCurrentKg);
       }
     } catch { toast.error('Failed to load dashboard.'); }
-    finally { setLoading(false); }
-  }, []);
+    finally {
+      setLoading(false);
+      setDayLoading(false);
+    }
+  }, [selectedDate, getWeekBounds]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Handle selecting a different day in the habit loop
+  const handleSelectDate = async (newDate) => {
+    if (newDate === selectedDate && todayData) return;
+    setSelectedDate(newDate);
+    // sync hydration for that specific date
+    const h = localStorage.getItem(HYDRATION_KEY(newDate));
+    setHydration(h ? parseFloat(h) : 0);
+    setDayLoading(true);
+    try {
+      const res = await entryApi.getByDate(newDate);
+      setTodayData(res.data.data);
+    } catch (err) {
+      toast.error('Failed to load entries for selected day.');
+    } finally {
+      setDayLoading(false);
+    }
+  };
 
   useEffect(() => {
     const handleSync = () => {
@@ -220,17 +284,28 @@ export default function DashboardPage() {
     }
     next = Math.min(next, TOTAL_GLASSES * 0.25);
     setHydration(next);
-    localStorage.setItem(HYDRATION_KEY(), next);
+    localStorage.setItem(HYDRATION_KEY(selectedDate), next);
   };
 
   const handleDelete = async (id) => {
     if (!confirm('Delete this entry?')) return;
-    try { await entryApi.deleteEntry(id); toast.success('Deleted.'); fetchData(); }
-    catch (e) { toast.error(getApiError(e)); }
+    try {
+      await entryApi.deleteEntry(id);
+      toast.success('Deleted.');
+      fetchData(selectedDate);
+    } catch (e) { toast.error(getApiError(e)); }
   };
 
-  const openAdd = (mealType, foodName = '') => { setEditEntry(null); setModalDefaults({ mealType, ...(foodName ? { foodName } : {}) }); setModalOpen(true); };
-  const openEdit = (entry) => { setEditEntry(entry); setModalDefaults({}); setModalOpen(true); };
+  const openAdd = (mealType, foodName = '') => {
+    setEditEntry(null);
+    setModalDefaults({ mealType, date: selectedDate, ...(foodName ? { foodName } : {}) });
+    setModalOpen(true);
+  };
+  const openEdit = (entry) => {
+    setEditEntry(entry);
+    setModalDefaults({});
+    setModalOpen(true);
+  };
   const closeModal = () => { setModalOpen(false); setEditEntry(null); setModalDefaults({}); };
 
   // ── AI scan handlers ─────────────────────────────────────────────────────────
@@ -251,6 +326,7 @@ export default function DashboardPage() {
     setScanModalOpen(false);
     setEditEntry(null);
     setModalDefaults({
+      date: selectedDate,
       mealType: 'breakfast',
       foodName: data.foodName || '',
       quantity: data.quantity || '',
@@ -331,17 +407,58 @@ export default function DashboardPage() {
 
 
 
-  // Week dots: show M-Sun with today highlighted
-  const today_dow = new Date().getDay(); // 0=Sun
-  const weekDots = WEEK_DAYS.map((day, i) => {
-    // i=0→Mon(1) … i=6→Sun(0)
-    const dow = i === 6 ? 0 : i + 1;
-    const isToday = dow === today_dow;
-    const isSat = i === 5;
-    return { day, isToday, isSat, logged: isToday ? allEntries.length > 0 : false };
-  });
+  // Week days calculation with logging status from weeklySummary and todayData
+  const weekDays = useMemo(() => {
+    const now = new Date();
+    const currentDay = now.getDay(); // 0=Sun, 1=Mon...
+    const distToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + distToMonday);
 
-  const dateLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    return WEEK_DAYS.map((dayName, idx) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + idx);
+      const dateStr = d.toISOString().split('T')[0];
+      const isToday = dateStr === today();
+      const isSelected = dateStr === selectedDate;
+
+      // Check in weeklySummary
+      const weekItem = weeklySummary.find((w) => w.date === dateStr);
+      let isLogged = Boolean((weekItem?.entryCount > 0) || (weekItem?.calories > 0));
+
+      // Cross-check if currently loaded date matches and has entries
+      if (dateStr === selectedDate && todayData?.entries?.length > 0) {
+        isLogged = true;
+      }
+
+      const dayCalories = weekItem?.calories || (dateStr === selectedDate ? todayData?.totals?.calories || 0 : 0);
+
+      return {
+        day: dayName,
+        short: dayName[0],
+        date: dateStr,
+        isToday,
+        isSelected,
+        logged: isLogged,
+        calories: dayCalories,
+        formattedDate: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        fullDayName: d.toLocaleDateString('en-US', { weekday: 'long' }),
+      };
+    });
+  }, [selectedDate, weeklySummary, todayData]);
+
+  // Selected date formatting helpers (without timezone offset issues)
+  const isViewingToday = selectedDate === today();
+  const dateParts = selectedDate.split('-');
+  const selectedDateObj = new Date(
+    parseInt(dateParts[0], 10),
+    parseInt(dateParts[1], 10) - 1,
+    parseInt(dateParts[2], 10)
+  );
+  const selectedDayName = selectedDateObj.toLocaleDateString('en-US', { weekday: 'long' });
+  const selectedDayShort = selectedDateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  const selectedDateLong = selectedDateObj.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const dateLabel = isViewingToday ? selectedDateLong : `Viewing ${selectedDateLong}`;
   const firstName = user?.name?.split(' ')[0] || 'there';
 
   if (loading) return (
@@ -406,10 +523,28 @@ export default function DashboardPage() {
         {/* ── Row 1: Today's Energy (2/3) + Habit Loop (1/3) ── */}
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, alignItems: 'stretch' }}>
 
-          {/* Today's Energy */}
-          <Card style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-            <SectionTitle hint={goalCal > consumed ? `${fmtCal(goalCal - consumed)} kcal left` : `${fmtCal(consumed - goalCal)} kcal over`}>
-              Today's energy
+          {/* Energy Summary Card */}
+          <Card style={{ height: '100%', display: 'flex', flexDirection: 'column', opacity: dayLoading ? 0.65 : 1, transition: 'opacity 0.2s' }}>
+            <SectionTitle
+              hint={
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span>
+                    {goalCal > consumed ? `${fmtCal(goalCal - consumed)} kcal left` : `${fmtCal(consumed - goalCal)} kcal over`}
+                  </span>
+                  {!isViewingToday && (
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => handleSelectDate(today())}
+                      style={{ fontSize: 11, padding: '3px 9px', height: 'auto', borderRadius: 99, fontWeight: 700 }}
+                      title="Return to today"
+                    >
+                      Today ↩
+                    </button>
+                  )}
+                </div>
+              }
+            >
+              {isViewingToday ? "Today's energy" : `${selectedDayName}'s energy (${selectedDayShort})`}
             </SectionTitle>
             <div style={{ display: 'flex', alignItems: 'center', gap: 32, flexWrap: 'wrap', flex: 1 }}>
 
@@ -455,43 +590,105 @@ export default function DashboardPage() {
           {/* Habit Loop */}
           <Card style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
             <div>
-              <SectionTitle hint={new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}>
+              <SectionTitle hint={isViewingToday ? new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : `${selectedDayShort} selected`}>
                 Habit loop
               </SectionTitle>
 
-              {/* Week dots */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, margin: '10px 0 16px' }}>
-                {weekDots.map((d) => (
-                  <div key={d.day} style={{ textAlign: 'center' }}>
-                    <div style={{
-                      width: 40, height: 40, borderRadius: 12, display: 'flex', alignItems: 'center',
-                      justifyContent: 'center', fontSize: 14, fontWeight: 700, margin: '0 auto',
-                      background: d.isToday
-                        ? (d.logged ? T.primary : 'oklch(0.91 0.055 155)')
-                        : (d.logged ? T.primary : T.surface3),
-                      color: d.isToday
-                        ? (d.logged ? '#fff' : T.primary)
-                        : (d.logged ? '#fff' : T.secondary),
-                      border: d.isToday
-                        ? `2.5px solid ${T.primary}`
-                        : '1.5px solid transparent',
-                      boxShadow: d.isToday ? `0 0 0 3px ${T.primary}25` : 'none',
-                      transition: 'all 0.2s',
-                    }}>
-                      {d.day[0]}
+              {/* Week day boxes */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, margin: '10px 0 12px' }}>
+                {weekDays.map((d) => {
+                  let bg = T.surface3;
+                  let color = T.secondary;
+                  let border = '2px solid transparent';
+                  let boxShadow = 'none';
+
+                  if (d.isSelected) {
+                    border = `2.5px solid ${T.primary}`;
+                    boxShadow = '0 0 0 3px oklch(0.48 0.098 155 / 0.35)';
+                    if (d.logged) {
+                      bg = T.primary;
+                      color = '#fff';
+                    } else {
+                      bg = 'oklch(0.91 0.055 155 / 0.35)';
+                      color = T.primary;
+                    }
+                  } else if (d.isToday) {
+                    if (d.logged) {
+                      bg = T.primary;
+                      color = '#fff';
+                    } else {
+                      bg = 'oklch(0.91 0.055 155)';
+                      color = T.primary;
+                    }
+                    border = '1.5px solid oklch(0.48 0.098 155 / 0.6)';
+                  } else if (d.logged) {
+                    bg = T.primary;
+                    color = '#fff';
+                  }
+
+                  return (
+                    <div
+                      key={d.day}
+                      onClick={() => handleSelectDate(d.date)}
+                      title={`${d.fullDayName}, ${d.formattedDate}: ${d.logged ? `${fmtCal(d.calories)} kcal logged` : 'No meals logged'}`}
+                      style={{ textAlign: 'center', cursor: 'pointer' }}
+                    >
+                      <button
+                        type="button"
+                        style={{
+                          width: 40, height: 40, borderRadius: 12, display: 'flex', alignItems: 'center',
+                          justifyContent: 'center', fontSize: 14, fontWeight: 700, margin: '0 auto',
+                          background: bg,
+                          color: color,
+                          border: border,
+                          boxShadow: boxShadow,
+                          cursor: 'pointer',
+                          padding: 0,
+                          transform: d.isSelected ? 'scale(1.06)' : 'scale(1)',
+                          transition: 'all 0.18s cubic-bezier(0.4, 0, 0.2, 1)',
+                        }}
+                      >
+                        {d.short}
+                      </button>
+                      <span style={{
+                        fontSize: 11,
+                        fontWeight: d.isSelected || d.isToday ? 700 : 500,
+                        color: d.isSelected || d.isToday ? T.primary : T.muted,
+                        marginTop: 6,
+                        display: 'block',
+                        position: 'relative',
+                      }}>
+                        {d.day}
+                        {d.isToday && (
+                          <span style={{
+                            position: 'absolute', bottom: -5, left: '50%', transform: 'translateX(-50%)',
+                            width: 4, height: 4, borderRadius: '50%', background: T.primary,
+                          }} title="Today" />
+                        )}
+                      </span>
                     </div>
-                    <span style={{
-                      fontSize: 11,
-                      fontWeight: d.isToday ? 700 : 500,
-                      color: d.isToday ? T.primary : T.muted,
-                      marginTop: 6,
-                      display: 'block',
-                    }}>
-                      {d.day}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
+
+              {!isViewingToday && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  fontSize: 12, color: T.primary, background: 'oklch(0.91 0.055 155 / 0.22)',
+                  padding: '6px 10px', borderRadius: 8, marginTop: 4, marginBottom: 6,
+                }}>
+                  <span>Viewing <strong>{selectedDayName}</strong> ({selectedDayShort})</span>
+                  <button
+                    onClick={() => handleSelectDate(today())}
+                    style={{
+                      background: 'none', border: 'none', color: T.primary,
+                      fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: 11,
+                    }}
+                  >
+                    Reset to Today
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Coach tip */}
@@ -514,8 +711,10 @@ export default function DashboardPage() {
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, alignItems: 'start', marginTop: 4 }}>
 
           {/* Meals card */}
-          <Card>
-            <SectionTitle hint={`${allEntries.length} entries today`}>Meals</SectionTitle>
+          <Card style={{ opacity: dayLoading ? 0.65 : 1, transition: 'opacity 0.2s' }}>
+            <SectionTitle hint={`${allEntries.length} ${allEntries.length === 1 ? 'entry' : 'entries'} on ${isViewingToday ? 'today' : selectedDayShort}`}>
+              Meals
+            </SectionTitle>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {MEAL_ORDER.map((mealType) => {
                 const cfg = MEAL_CONFIG[mealType];
@@ -542,7 +741,7 @@ export default function DashboardPage() {
 
                     {/* Empty state */}
                     {entries.length === 0 ? (
-                      <p style={{ fontSize: 14, color: T.muted }}>Nothing logged yet.</p>
+                      <p style={{ fontSize: 14, color: T.muted }}>Nothing logged yet on {isViewingToday ? 'today' : selectedDayName}.</p>
                     ) : (
                       <ul style={{ display: 'flex', flexDirection: 'column', gap: 6, listStyle: 'none', padding: 0, margin: 0 }}>
                         {entries.map((entry) => (
@@ -632,7 +831,7 @@ export default function DashboardPage() {
 
                     return (
                       <>
-                        <div style={{ height: 8, borderRadius: 99, background: `${T.primary}18`, marginBottom: 8 }}>
+                        <div style={{ height: 8, borderRadius: 99, background: 'oklch(0.48 0.098 155 / 0.18)', marginBottom: 8 }}>
                           <div style={{
                             height: '100%',
                             width: `${pct}%`,
@@ -818,8 +1017,8 @@ export default function DashboardPage() {
       <FoodEntryModal
         isOpen={modalOpen}
         onClose={closeModal}
-        onSaved={fetchData}
-        entry={editEntry ? { ...editEntry, date: today() } : null}
+        onSaved={() => fetchData(selectedDate)}
+        entry={editEntry ? { ...editEntry, date: editEntry.date || selectedDate } : null}
         defaults={modalDefaults}
       />
     </div>

@@ -10,7 +10,8 @@ export const authApi = {
 
 export const entryApi = {
   getEntries: (params) => api.get('/entries', { params }),
-  getToday: () => api.get('/entries/today'),
+  getToday: (params) => api.get('/entries/today', { params }),
+  getByDate: (date) => api.get('/entries/today', { params: { date } }),
   getEntry: (id) => api.get(`/entries/${id}`),
   createEntry: (data) => api.post('/entries', data),
   updateEntry: (id, data) => api.put(`/entries/${id}`, data),
