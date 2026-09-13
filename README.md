@@ -1,124 +1,315 @@
 # NutriTrack — Personal Calorie & Nutrition Tracker
 
-NutriTrack is an intelligent full-stack calorie and macro tracking web application powered by **Google Gemini AI**, backed by **Supabase PostgreSQL (via Prisma ORM)**, accelerated with **Redis Cloud caching**, and integrated with **Cloudinary** for persistent media asset management with **SHA-256 file content deduplication**.
+NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking platform. Powered by **Google Gemini AI**, backed by **Supabase PostgreSQL (via Prisma ORM)**, accelerated with **Redis Cloud caching**, and integrated with **Cloudinary** for media management with **SHA-256 file content deduplication**.
 
 ---
 
-## 🏗️ Architecture Overview
+## 📑 Table of Contents
+- [✨ Features](#-features)
+  - [Core Tracking & Health Goals](#core-tracking--health-goals)
+  - [Interactive Habit Loop & Time Travel](#interactive-habit-loop--time-travel)
+  - [Visual Reports & Analytics](#visual-reports--analytics)
+  - [AI-Powered Capabilities](#ai-powered-capabilities)
+  - [Enterprise-Grade Security & Multi-Tenancy](#enterprise-grade-security--multi-tenancy)
+- [📐 System Architecture](#-system-architecture)
+- [🗄️ Database Schema & Entity Diagrams](#️-database-schema--entity-diagrams)
+- [⚡ SHA-256 Deduplication & Redis Cache-Aside](#-sha-256-deduplication--redis-cache-aside)
+- [📡 API Specifications & Pagination](#-api-specifications--pagination)
+- [🔐 Environment Variables](#-environment-variables)
+- [⚙️ Setup & Installation](#️-setup--installation)
+- [🧪 Testing Deduplication & Caching](#-testing-deduplication--caching)
+- [📜 License](#-license)
 
-The system is designed with a high-performance **cache-aside** and **content-addressed deduplication** pattern:
+---
 
-```text
-                               ┌─────────────────────────┐
-                               │   React Frontend (Vite) │
-                               └────────────┬────────────┘
-                                            │ HTTP / JSON & Multipart
-                                            ▼
-                               ┌─────────────────────────┐
-                               │   Express.js Backend    │
-                               │   (Node.js + Multer RAM)│
-                               └───────┬───────────┬─────┘
-                                       │           │
-                     ┌─────────────────┴─┐       ┌─┴─────────────────┐
-                     │   SHA-256 Hash    │       │ Redis Cloud Cache │
-                     │   Calculator      │       │ (Cache-Aside)     │
-                     └─────────┬─────────┘       └─┬─────────────────┘
-                               │                   │
-                 ┌─────────────┴────────┐          │ Fast HIT
-                 │ Deduplication Check  ├──────────┘
-                 │ (userId + fileHash)  │
-                 └─────────────┬────────┘
-                               │
-            ┌──────────────────┴──────────────────┐
-            ▼                                     ▼
-     [Duplicate HIT]                        [New Upload MISS]
-   Same user + same file                 Same/different user + new file
-  • Reuse stored Gemini result          1. Stream upload to Cloudinary (secure_url)
-  • NO Gemini API call ($0 cost)        2. Call Google Gemini 1.5 Flash Vision / PDF
-  • Instant response                    3. Persist record to Supabase (FileUpload)
-                                        4. Populate Redis Cloud cache (TTL)
-                                        5. Return analyzed nutrition data
+## ✨ Features
+
+### Core Tracking & Health Goals
+- **Personal Health Goals**: Set daily calorie targets, macronutrient goals (protein, carbs, and fat in grams), target body weight (kg), target completion date, and coaching notes.
+- **Structured Meal Logging**: Food entries organized across four distinct daily meal slots: **Breakfast**, **Lunch**, **Dinner**, and **Snacks**.
+- **Comprehensive Nutritional Metrics**:
+  - **Macronutrients**: Calories, Protein, Carbohydrates, Fat.
+  - **Micronutrients**: Dietary Fiber, Sugar, Sodium, Potassium, Vitamin C, Vitamin D, Calcium, and Iron.
+- **Hydration Tracker**: Interactive 8-glass water tracker (250ml per glass / 2000ml goal) tracked per calendar date.
+- **Weight Progress**: Log current weight updates with immediate trajectory comparison against your target weight goal.
+
+### Interactive Habit Loop & Time Travel
+- **7-Day Consistency Track**: Weekly habit loop showing Monday through Sunday consistency at a glance.
+- **Interactive Day Selection**: Click on any day box (**Mon, Tue, Wed, Thu, Fri, Sat, Sun**) in the Habit Loop to instantly inspect that specific day's calorie ring, macros, and logged meals.
+- **Dynamic Context Switching**: Energy cards, macro bars, and meal cards adapt to the selected day with a 1-click **"Today ↩"** reset button.
+- **Date-Aware Meal Entry**: Adding or editing a meal while viewing a past date automatically pre-fills that specific day.
+
+### Visual Reports & Analytics
+- **Weekly Calorie Trend**: Bar and area charts displaying daily calorie consumption vs. daily goal over custom time horizons.
+- **Macronutrient Breakdown**: Multi-bar and stacked graphs tracking protein, carbohydrate, and fat intake by day and week.
+- **Micronutrient Summary**: Aggregated intake totals compared against Recommended Daily Values (RDVs).
+- **Goal vs. Actual Comparison**: Day-by-day variance charts highlighting calorie deficits and surpluses.
+- **Meal Distribution**: Calorie split and percentage breakdown across breakfast, lunch, dinner, and snacks.
+- **PDF Report Export**: Generate and download comprehensive nutrition summary reports directly to PDF using `jspdf` and `html2canvas`.
+
+### AI-Powered Capabilities
+- **AI Food Recognition (Vision)**: Upload a photo of a meal plate or a nutrition facts label. Google Gemini 1.5 Flash extracts nutritional values (calories, macros, micros, confidence score) and pre-fills the logging modal.
+- **NutriBot Conversational Coach**: Embedded LLM chat assistant that understands natural language. Can answer nutritional questions, evaluate progress, and automatically execute meal log actions (`ACTION:LOG_ENTRY`) into the database.
+- **Bulk Diary Import via PDF**: Upload exported food diary PDFs. The backend extracts text using `pdf-parse`, parses tabular entries with Gemini, and bulk-inserts them into your database.
+
+### Enterprise-Grade Security & Multi-Tenancy
+- **Multi-User Isolation**: Complete data segregation. All database queries, caches, and uploaded assets are strictly scoped to the authenticated user ID.
+- **Robust JWT Authentication**: Access tokens (15-minute lifetime) paired with cryptographically secure refresh tokens stored in PostgreSQL with automatic rotation.
+- **Password Security**: Passwords hashed with `bcryptjs` (salt rounds: 12).
+- **Graceful Fault Tolerance**: Built-in fallback mechanisms so the application remains responsive even if Redis Cloud or Cloudinary experiences intermittent connectivity.
+
+---
+
+## 📐 System Architecture
+
+NutriTrack enforces a strict separation between client, server, cache, database, and third-party AI services:
+
+```mermaid
+flowchart TD
+    Client["React 19 Frontend (Vite)"]
+    API["Express.js REST API (Node 22)"]
+    Redis[("Redis Cloud (Cache-Aside)")]
+    DB[("Supabase PostgreSQL (Prisma ORM)")]
+    Cloudinary["Cloudinary CDN (Media & PDFs)"]
+    Gemini["Google Gemini 1.5 Flash (AI Vision & LLM)"]
+
+    Client -->|HTTP / JSON & Multipart| API
+    API <-->|Read / Write Cache (TTL)| Redis
+    API <-->|Prisma ORM Client| DB
+    API -->|Stream Upload (RAM Buffer)| Cloudinary
+    API -->|Base64 Image / Text Analysis| Gemini
 ```
 
 ---
 
-## 🗄️ Database Changes & Migrations
+## 🗄️ Database Schema & Entity Diagrams
 
-The database is hosted on **Supabase PostgreSQL** and managed through **Prisma ORM**.
+The database schema is defined in [`backend/prisma/schema.prisma`](backend/prisma/schema.prisma) and hosted on **Supabase PostgreSQL**.
 
-### 1. New Model: `FileUpload`
+### Entity-Relationship (ER) Diagram
 
-Located in [`backend/prisma/schema.prisma`](backend/prisma/schema.prisma):
+```mermaid
+erDiagram
+    User ||--o{ RefreshToken : "has many"
+    User ||--o{ FoodEntry : "logs"
+    User ||--o{ Goal : "sets"
+    User ||--o{ ChatMessage : "exchanges"
+    User ||--o{ FileUpload : "uploads"
 
-```prisma
-model FileUpload {
-  id               String   @id @default(uuid())
-  userId           String
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  fileHash         String   // SHA-256 hex digest of file contents
-  fileType         String   // "image" | "pdf"
-  originalName     String?
-  cloudinaryUrl    String   // Cloudinary secure_url
-  processingStatus String   @default("completed") // "pending" | "completed" | "failed"
-  geminiResult     Json?    // Cached structured response from Gemini
-  errorMessage     String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+    User {
+        String id PK "UUID"
+        String name
+        String email UK
+        String passwordHash
+        DateTime createdAt
+        DateTime updatedAt
+    }
 
-  @@unique([userId, fileHash])
-  @@index([userId, fileHash])
+    RefreshToken {
+        String id PK "UUID"
+        String token UK
+        String userId FK
+        DateTime expiresAt
+        DateTime createdAt
+    }
+
+    FoodEntry {
+        String id PK "UUID"
+        String userId FK
+        String date "YYYY-MM-DD"
+        MealType mealType "breakfast | lunch | dinner | snacks"
+        String foodName
+        Float quantity
+        String unit "default: g"
+        Float calories
+        Float protein
+        Float carbs
+        Float fat
+        Float fiber
+        Float sugar
+        Float sodium
+        Float potassium
+        Float vitaminC
+        Float vitaminD
+        Float calcium
+        Float iron
+        String imageUrl
+        EntrySource source "manual | ai | pdf"
+        String notes
+        DateTime createdAt
+        DateTime updatedAt
+    }
+
+    Goal {
+        String id PK "UUID"
+        String userId FK
+        Float dailyCalories
+        Float proteinG
+        Float carbsG
+        Float fatG
+        Float weightGoalKg
+        DateTime targetDate
+        String notes
+        DateTime createdAt
+        DateTime updatedAt
+    }
+
+    ChatMessage {
+        String id PK "UUID"
+        String userId FK
+        ChatRole role "user | assistant"
+        String content
+        Json actions
+        DateTime createdAt
+        DateTime updatedAt
+    }
+
+    FileUpload {
+        String id PK "UUID"
+        String userId FK
+        String fileHash "SHA-256 Digest"
+        String fileType "image | pdf"
+        String originalName
+        String cloudinaryUrl
+        String processingStatus "completed | pending | failed"
+        Json geminiResult
+        String errorMessage
+        DateTime createdAt
+        DateTime updatedAt
+    }
+```
+
+### Key Data Model Choices
+1. **ISO Date Strings (`YYYY-MM-DD`)**: Storing `date` as a calendar string prevents timezone shifts and daylight saving errors during date filtering and aggregation.
+2. **Compound Unique Index `(userId, fileHash)`**: Enforces cryptographic file deduplication at the PostgreSQL engine level.
+3. **Cascade Deletions (`onDelete: Cascade`)**: Deleting a user cleanly purges all related entries, goals, files, and chat messages.
+4. **Prisma Session & Transaction Pooling**: Configured for Supabase's transaction pooler (`port 6543`) during runtime and direct connection (`port 5432`) during migrations.
+
+---
+
+## ⚡ SHA-256 Deduplication & Redis Cache-Aside
+
+To eliminate duplicate processing fees and unnecessary Gemini API calls, uploaded media passes through content-addressed deduplication:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User
+    participant Server as Express Backend
+    participant Redis as Redis Cloud
+    participant DB as Supabase DB
+    participant Cloud as Cloudinary
+    participant AI as Gemini AI
+
+    User->>Server: Upload Photo / PDF (Multipart)
+    Server->>Server: Calculate SHA-256 of file buffer
+    Server->>Redis: Check cache key: gemini:file:{userId}:{fileHash}
+
+    alt Redis Cache HIT
+        Redis-->>Server: Return cached nutrition JSON
+        Server-->>User: ⚡ Instant Response (source: redis_cache, $0 AI cost)
+    else Redis Cache MISS
+        Server->>DB: Check FileUpload table: (userId, fileHash)
+        alt Database HIT (Duplicate)
+            DB-->>Server: Return stored geminiResult & cloudinaryUrl
+            Server->>Redis: Store in Redis (TTL: 30 days)
+            Server-->>User: 💾 Fast Response (source: database_dedup, $0 AI cost)
+        else Database MISS (New File)
+            Server->>Cloud: Stream file buffer (upload_stream)
+            Cloud-->>Server: Return secure_url
+            Server->>AI: Call Gemini Vision / Document Parser
+            AI-->>Server: Structured nutritional JSON
+            Server->>DB: Insert into FileUpload (userId, fileHash, secure_url, result)
+            Server->>Redis: Cache result (TTL: 30 days)
+            Server-->>User: ✅ Full Response (source: gemini_api)
+        end
+    end
+```
+
+### Redis Key Patterns & Expiry (TTL) Policies
+
+| Key Pattern | Purpose | TTL | Invalidation Trigger |
+|---|---|---|---|
+| `gemini:file:{userId}:{fileHash}` | Cached Gemini AI nutrition analysis | **30 Days** (`2592000s`) | Replaced if re-processed |
+| `entries:date:{userId}:{YYYY-MM-DD}` | Grouped meal breakdown & daily totals | **10 Minutes** (`600s`) | Any meal logged/edited/deleted |
+| `reports:*:{userId}:{start}:{end}` | Aggregated daily totals, macro/micro sums | **30 Minutes** (`1800s`) | Any meal logged/edited/deleted |
+| `goals:active:{userId}` | Current active user calorie & macro target | **1 Hour** (`3600s`) | Any goal created/updated/deleted |
+
+---
+
+## 📡 API Specifications & Pagination
+
+All endpoints communicate over JSON with standard HTTP status codes. List endpoints support uniform pagination parameters.
+
+### Standard Pagination Response Schema
+```json
+{
+  "success": true,
+  "data": [ ... ],
+  "pagination": {
+    "total": 128,
+    "page": 1,
+    "limit": 20,
+    "totalPages": 7,
+    "hasPrev": false,
+    "hasNext": true
+  }
 }
 ```
 
-### 2. Running Migrations
+### Endpoint Reference
 
-You can apply the database changes using either method below:
+#### Authentication
+| Method | Endpoint | Description | Auth Required |
+|---|---|---|:---:|
+| `POST` | `/api/auth/register` | Register new user account | No |
+| `POST` | `/api/auth/login` | Login and receive access + refresh token | No |
+| `POST` | `/api/auth/refresh` | Exchange refresh token for new access token | No |
+| `POST` | `/api/auth/logout` | Revoke refresh token and terminate session | Yes |
+| `GET` | `/api/auth/me` | Get profile of currently authenticated user | Yes |
 
-#### Option A: Prisma CLI (Recommended)
-From the `backend` directory:
-```bash
-npx prisma db push
-```
+#### Meal Entries
+| Method | Endpoint | Description | Query Parameters |
+|---|---|---|---|
+| `GET` | `/api/entries` | List entries (paginated) | `startDate`, `endDate`, `date`, `mealType`, `page`, `limit` |
+| `GET` | `/api/entries/today` | Get meals & totals for a specific date (Redis cached) | `date` (default: today) |
+| `GET` | `/api/entries/:id` | Get single food entry details | — |
+| `POST` | `/api/entries` | Log a new food entry (invalidates cache) | — |
+| `PUT` | `/api/entries/:id` | Update an existing food entry | — |
+| `DELETE` | `/api/entries/:id` | Delete a food entry | — |
 
-#### Option B: Supabase SQL Editor (Manual SQL)
-Open your **Supabase Project Dashboard** → **SQL Editor** → Paste and run:
+#### Goals
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/goals` | Get current active nutrition and weight goal |
+| `POST` | `/api/goals` | Create a new goal (becomes active, invalidates cache) |
+| `GET` | `/api/goals/history` | Paginated history of previous goals |
+| `PUT` | `/api/goals/:id` | Update an existing goal |
+| `DELETE` | `/api/goals/:id` | Delete a goal |
 
-```sql
--- 1. Create FileUpload table
-CREATE TABLE IF NOT EXISTS "FileUpload" (
-    "id" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
-    "fileHash" TEXT NOT NULL,
-    "fileType" TEXT NOT NULL,
-    "originalName" TEXT,
-    "cloudinaryUrl" TEXT NOT NULL,
-    "processingStatus" TEXT NOT NULL DEFAULT 'completed',
-    "geminiResult" JSONB,
-    "errorMessage" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "FileUpload_pkey" PRIMARY KEY ("id")
-);
+#### Reports & Visualizations (Redis Cached)
+| Method | Endpoint | Description | Query Parameters |
+|---|---|---|---|
+| `GET` | `/api/reports/weekly-calories` | Daily calorie breakdown & entry counts | `startDate`, `endDate` |
+| `GET` | `/api/reports/macros` | Daily protein, carb, fat, and calorie totals | `startDate`, `endDate` |
+| `GET` | `/api/reports/micros` | Aggregated micronutrient sums & days tracked | `startDate`, `endDate` |
+| `GET` | `/api/reports/goal-comparison` | Actual intake vs. goal target comparison | `startDate`, `endDate` |
+| `GET` | `/api/reports/meal-distribution` | Calorie split grouped by meal type | `startDate`, `endDate` |
 
--- 2. Add foreign key relation
-ALTER TABLE "FileUpload" 
-ADD CONSTRAINT "FileUpload_userId_fkey" 
-FOREIGN KEY ("userId") REFERENCES "User"("id") 
-ON DELETE CASCADE ON UPDATE CASCADE;
-
--- 3. Create unique index for user + fileHash deduplication
-CREATE UNIQUE INDEX IF NOT EXISTS "FileUpload_userId_fileHash_key" 
-ON "FileUpload"("userId", "fileHash");
-
-CREATE INDEX IF NOT EXISTS "FileUpload_userId_fileHash_idx" 
-ON "FileUpload"("userId", "fileHash");
-```
+#### AI & File Processing
+| Method | Endpoint | Description | Content-Type |
+|---|---|---|---|
+| `POST` | `/api/ai/analyze-image` | Upload food photo → SHA-256 → Cloudinary → Gemini | `multipart/form-data` |
+| `POST` | `/api/ai/import-pdf` | Upload nutrition PDF → SHA-256 → Bulk import | `multipart/form-data` |
+| `POST` | `/api/ai/chat` | Conversational NutriBot coach turn | `application/json` |
+| `GET` | `/api/ai/chat/history` | Paginated conversational history | — |
+| `DELETE` | `/api/ai/chat/history` | Clear conversational history | — |
 
 ---
 
 ## 🔐 Environment Variables
 
-The backend configuration is managed through `backend/.env`. A reference template is provided in [`backend/.env.example`](backend/.env.example).
+Configure `backend/.env` according to the template in [`backend/.env.example`](backend/.env.example):
 
 ```env
 # ── Server ────────────────────────────────────────────────────────────────────
@@ -126,21 +317,23 @@ PORT=5000
 NODE_ENV=development
 CORS_ORIGIN=http://localhost:5173
 
-# ── Supabase PostgreSQL Database (via Prisma) ─────────────────────────────────
-DATABASE_URL="postgresql://postgres.[YOUR-PROJECT-REF]:[YOUR-PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres?pgbouncer=true"
-DIRECT_URL="postgresql://postgres.[YOUR-PROJECT-REF]:[YOUR-PASSWORD]@aws-0-[REGION].pooler.supabase.com:5432/postgres"
+# ── Database (Supabase PostgreSQL via Prisma) ─────────────────────────────────
+# Port 6543 (Transaction mode pooler for app runtime)
+DATABASE_URL="postgresql://postgres.[YOUR-REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres?pgbouncer=true"
 
+# Port 5432 (Session mode for Prisma CLI migrations)
+DIRECT_URL="postgresql://postgres.[YOUR-REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:5432/postgres"
 
 # ── Redis Cloud (Direct Connection) ───────────────────────────────────────────
-REDIS_URL=redis://default:your_redis_password@your_redis_endpoint.cloud.redislabs.com:12345
+REDIS_URL="redis://default:[PASSWORD]@[HOST]:[PORT]"
 
 # ── Cloudinary (Images & PDFs) ────────────────────────────────────────────────
-CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
-CLOUDINARY_API_KEY=your_cloudinary_api_key
-CLOUDINARY_API_SECRET=your_cloudinary_api_secret
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
 
 # ── Google Gemini AI ──────────────────────────────────────────────────────────
-GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_API_KEY=your_gemini_api_key
 
 # ── JWT Authentication ────────────────────────────────────────────────────────
 JWT_SECRET=your_super_secret_jwt_key_change_in_production
@@ -148,243 +341,93 @@ JWT_EXPIRES_IN=15m
 REFRESH_TOKEN_EXPIRES_DAYS=30
 ```
 
-> **Security Note:** `backend/.env` and all `*.env` files are strictly gitignored to prevent credential leaks.
-
 ---
 
-## ⚙️ Exact Manual Setup Steps
-
-### 1. Supabase Setup
-1. Log in to [Supabase](https://supabase.com) and create or select your project.
-2. Under **Project Settings** → **Database**:
-   - Copy the **Connection string** (URI) with **Mode: Transaction** (port `6543`) into `DATABASE_URL`.
-   - Copy the **Connection string** (URI) with **Mode: Session** (port `5432`) into `DIRECT_URL`.
-3. Run `npx prisma db push` inside `backend/` to sync the database schema.
-
-### 2. Redis Cloud Setup
-1. Create a free account at [Redis.com (Redis Cloud)](https://redis.io/try-free/).
-2. Create a free subscription (Fixed 30MB free tier).
-3. Once the database is created, navigate to **Database** → **Configuration**.
-4. Look for **General** → **Public endpoint** (e.g. `redis-12345.c10.us-east-1-2.ec2.redns.redis-cloud.com:12345`) and **Security** → **Default user password**.
-5. Form your connection string:
-   ```text
-   redis://default:<PASSWORD>@<PUBLIC_ENDPOINT>
-   ```
-   (Or `rediss://` if TLS is enabled).
-6. Paste into `backend/.env` under `REDIS_URL`.
-7. *Note:* The backend is built with connection resilience; if `REDIS_URL` is empty or Redis is temporarily down, the app automatically falls back to Supabase without crashing.
-
-### 3. Cloudinary Setup
-1. Sign up at [Cloudinary](https://cloudinary.com/).
-2. On your **Cloudinary Dashboard**, locate the **Product Environment Credentials**:
-   - `Cloud Name` → `CLOUDINARY_CLOUD_NAME`
-   - `API Key` → `CLOUDINARY_API_KEY`
-   - `API Secret` → `CLOUDINARY_API_SECRET`
-3. Paste these values into `backend/.env`.
-
-### 4. Google Gemini API Setup
-1. Navigate to [Google AI Studio](https://aistudio.google.com/app/apikey).
-2. Click **Create API Key**.
-3. Copy the key and paste it into `backend/.env` under `GEMINI_API_KEY`.
-
----
-
-## 🚀 How to Run the Project
+## ⚙️ Setup & Installation
 
 ### Prerequisites
 - Node.js ≥ 18
 - npm ≥ 9
+- Free account credentials for **Supabase**, **Redis Cloud**, **Cloudinary**, and **Google AI Studio**.
 
-### 1. Start the Backend
+### 1. Database Synchronization (Prisma)
+From the `backend` directory:
 ```bash
 cd backend
 npm install
+npx prisma db push
+```
+*(Prisma connects directly using your `DIRECT_URL` and ensures all tables, foreign keys, and indexes are created).*
+
+### 2. Start Backend Server
+```bash
 npm run dev
 ```
-- Backend starts at: `http://localhost:5000`
+- Backend runs at: `http://localhost:5000`
 - Health check: `http://localhost:5000/api/health`
 
-### 2. Start the Frontend
+### 3. Start Frontend Client
+In a separate terminal:
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-- Frontend starts at: `http://localhost:5173`
+- Frontend client runs at: `http://localhost:5173`
 
 ---
 
-## 🔍 How SHA-256 Deduplication Works
+## 🧪 Testing Deduplication & Caching
 
-Every uploaded image or PDF contains a cryptographic digital fingerprint. Rather than hashing metadata or Cloudinary URLs (which can change between uploads), NutriTrack hashes the **exact binary content** of the file in RAM using SHA-256:
-
-```javascript
-const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-```
-
-### Composite Key: `user_id + file_hash`
-Duplicate detection is scoped strictly per user:
-
-| Scenario | Condition | Result |
-|---|---|---|
-| **Same User + Same File** | `(user_id, file_hash)` exists | **REUSE** stored Gemini result. **DO NOT** call Gemini API. **NO** redundant Cloudinary upload. Instant response with zero extra API billing. |
-| **Different User + Same File** | User B uploads file previously uploaded by User A | **NEW UPLOAD**. User B's own record is created; Gemini can be called and results stored specifically for User B. |
-| **Same User + Modified File** | Any 1 byte changed in file | New SHA-256 hash. Treated as a new upload. |
-
----
-
-## ⚡ How Redis Cloud Caching Works
-
-Redis Cloud is used as a high-performance **cache-aside** layer:
-
-```text
-Incoming Request
-       │
-       ▼
-Check Redis Cache
-       ├─► [HIT] ────► Return cached JSON immediately (~5ms)
-       │
-       └─► [MISS] ───► Query Supabase PostgreSQL
-                            │
-                            ▼
-                       Write result into Redis (with TTL)
-                            │
-                            ▼
-                       Return response (~100-250ms)
-```
-
-### Key Spaces & TTL Policies
-
-| Key Pattern | Purpose | TTL |
-|---|---|---|
-| `gemini:file:{userId}:{fileHash}` | Cached Gemini AI analysis for images and PDFs | **30 Days** (`2592000s`) |
-| `reports:*:{userId}:{start}:{end}` | Weekly calories, macro breakdown, micros, goal comparison, meal distribution | **30 Minutes** (`1800s`) |
-| `entries:today:{userId}:{date}` | Today's food entries and daily totals | **10 Minutes** (`600s`) |
-| `goals:active:{userId}` | Current active user nutrition goal | **1 Hour** (`3600s`) |
-
-### Cache Invalidation on Mutation
-Whenever an entry is created, updated, deleted, imported from a PDF, or logged by the AI chat, the backend automatically invalidates related cache keys:
-```javascript
-await invalidateUserCache(userId);
-```
-This triggers a non-blocking `SCAN` and delete for:
-- `entries:*:{userId}*`
-- `reports:*:{userId}*`
-- `goals:*:{userId}*`
-
-The user always sees immediate updates without stale data!
-
----
-
-## 🧪 How to Test New Upload vs Duplicate Upload
-
-### Verification via cURL or Frontend
-
-#### 1. Register & Login to get a JWT
+### 1. Authenticate via cURL
 ```bash
 # Register
 curl -X POST http://localhost:5000/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"name":"Tester","email":"test@example.com","password":"Password123!"}'
 
-# Login
-LOGIN_RES=$(curl -s -X POST http://localhost:5000/api/auth/login \
+# Login and extract token
+TOKEN=$(curl -s -X POST http://localhost:5000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","password":"Password123!"}')
-
-TOKEN=$(echo $LOGIN_RES | grep -o '"accessToken":"[^"]*' | cut -d'"' -f4)
-echo "JWT Token: $TOKEN"
+  -d '{"email":"test@example.com","password":"Password123!"}' | grep -o '"accessToken":"[^"]*' | cut -d'"' -f4)
 ```
 
-#### 2. Test 1: Upload New Image
-Upload a food image for the first time:
+### 2. Test 1: Upload New Image
 ```bash
 curl -X POST http://localhost:5000/api/ai/analyze-image \
   -H "Authorization: Bearer $TOKEN" \
   -F "image=@/path/to/food.jpg"
 ```
-**Expected Response:**
+**Output:**
 ```json
 {
   "success": true,
-  "data": { "foodName": "Grilled Chicken Salad", "calories": 350, ... },
+  "data": { "foodName": "Oatmeal with Berries", "calories": 240, ... },
   "source": "gemini_api",
   "duplicate": false,
-  "fileHash": "9f83...64chars",
-  "cloudinaryUrl": "https://res.cloudinary.com/.../uploaded-food.jpg"
+  "cloudinaryUrl": "https://res.cloudinary.com/.../uploaded-image.jpg"
 }
 ```
-*Backend logs:*
-```text
-☁️ [New File] Uploading image to Cloudinary...
-🤖 [New File] Calling Gemini API for image analysis...
-✅ [Success] Processed and saved new image
-```
 
-#### 3. Test 2: Upload Duplicate Image (Same User)
-Upload the exact same `food.jpg` again:
+### 3. Test 2: Upload Duplicate Image (Same User)
+Upload the exact same `food.jpg`:
 ```bash
 curl -X POST http://localhost:5000/api/ai/analyze-image \
   -H "Authorization: Bearer $TOKEN" \
   -F "image=@/path/to/food.jpg"
 ```
-**Expected Response:**
+**Output (< 15ms response time, zero Gemini API calls):**
 ```json
 {
   "success": true,
-  "data": { "foodName": "Grilled Chicken Salad", "calories": 350, ... },
+  "data": { "foodName": "Oatmeal with Berries", "calories": 240, ... },
   "source": "redis_cache",
-  "duplicate": true,
-  "fileHash": "9f83...64chars"
+  "duplicate": true
 }
 ```
-*Backend logs:*
-```text
-⚡ [Cache HIT] Returning cached Gemini analysis for user ... (hash: 9f83...)
-```
-Notice:
-- Response is returned in **< 15 milliseconds**
-- **Zero calls** made to Gemini API
-- **Zero re-uploads** to Cloudinary
-
-#### 4. Test 3: Upload with Different User
-Create a second user account and upload the exact same `food.jpg`.
-**Expected Response:**
-- `duplicate: false`
-- Processed as a new upload for user 2 with isolated records and permissions.
-
----
-
-## 📡 Complete API Reference
-
-### AI Endpoints
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/ai/analyze-image` | Upload image (`multipart/form-data`) → SHA-256 check → Cloudinary → Gemini |
-| `POST` | `/api/ai/import-pdf` | Upload food diary PDF → SHA-256 check → Cloudinary → Gemini → bulk import |
-| `POST` | `/api/ai/chat` | Conversational NutriBot coach with automatic meal logging & cache invalidation |
-| `GET` | `/api/ai/chat/history` | Paginated chat message history |
-| `DELETE` | `/api/ai/chat/history` | Clear conversational history |
-
-### Food Entries
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/entries` | List entries (paginated, date range & meal filters) |
-| `GET` | `/api/entries/today` | Today's entries grouped by meal (Redis cached) |
-| `POST` | `/api/entries` | Add meal entry (invalidates cache) |
-| `PUT` | `/api/entries/:id` | Update meal entry (invalidates cache) |
-| `DELETE` | `/api/entries/:id` | Delete meal entry (invalidates cache) |
-
-### Reports (Redis Cached)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/reports/weekly-calories` | Daily calorie breakdown for date range |
-| `GET` | `/api/reports/macros` | Daily protein/carbs/fat totals |
-| `GET` | `/api/reports/micros` | Micronutrient aggregate breakdown |
-| `GET` | `/api/reports/goal-comparison` | Target vs actual nutritional intake |
-| `GET` | `/api/reports/meal-distribution` | Calorie split by meal type |
 
 ---
 
 ## 📜 License
-MIT
+
+MIT License. Designed and engineered for high-performance, personalized health tracking.
