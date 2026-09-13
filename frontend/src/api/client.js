@@ -1,7 +1,18 @@
 import axios from 'axios';
 
+let rawBaseURL = import.meta.env.VITE_API_URL || '/api';
+
+// Normalize baseURL: if it's a full URL (e.g. deployed on Render/Vercel), ensure it includes /api
+let baseURL = rawBaseURL.trim();
+if (baseURL.startsWith('http://') || baseURL.startsWith('https://')) {
+  baseURL = baseURL.replace(/\/+$/, '');
+  if (!baseURL.endsWith('/api')) {
+    baseURL = `${baseURL}/api`;
+  }
+}
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api',
+  baseURL,
   timeout: 30000,
 });
 
@@ -63,7 +74,7 @@ api.interceptors.response.use(
       }
 
       try {
-        const { data } = await axios.post('/api/auth/refresh', { refreshToken });
+        const { data } = await axios.post(`${baseURL}/auth/refresh`, { refreshToken });
         const newAccessToken = data.accessToken;
         localStorage.setItem('nutritrack_token', newAccessToken);
         api.defaults.headers.common.Authorization = `Bearer ${newAccessToken}`;
