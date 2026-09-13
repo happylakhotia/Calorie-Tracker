@@ -5,7 +5,7 @@ NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking
 ---
 
 ## 📑 Table of Contents
-- [Features](#-features)
+- [Features Implemented](#-features)
   - [Core Tracking & Health Goals](#core-tracking--health-goals)
   - [Interactive Habit Loop & Time Travel](#interactive-habit-loop--time-travel)
   - [Visual Reports & Analytics](#visual-reports--analytics)
@@ -21,7 +21,7 @@ NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking
 
 ---
 
-## Features
+## Features Implemented
 
 ### Core Tracking & Health Goals
 - **Personal Health Goals**: Set daily calorie targets, macronutrient goals (protein, carbs, and fat in grams), target body weight (kg), target completion date, and coaching notes.
