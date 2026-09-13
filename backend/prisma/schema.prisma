@@ -1,0 +1,133 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")   // transaction-mode pooler — used by the app at runtime
+  directUrl = env("DIRECT_URL")     // session-mode pooler — used by Prisma CLI for migrations
+}
+
+// ── Enums ─────────────────────────────────────────────────────────────────────
+
+enum MealType {
+  breakfast
+  lunch
+  dinner
+  snacks
+}
+
+enum EntrySource {
+  manual
+  ai
+  pdf
+}
+
+enum ChatRole {
+  user
+  assistant
+}
+
+// ── Models ────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String         @id @default(uuid())
+  name          String
+  email         String         @unique
+  passwordHash  String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  foodEntries   FoodEntry[]
+  goals         Goal[]
+  chatMessages  ChatMessage[]
+  refreshTokens RefreshToken[]
+  fileUploads   FileUpload[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model FoodEntry {
+  id        String      @id @default(uuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date      String      // YYYY-MM-DD — avoids timezone issues
+  mealType  MealType
+  foodName  String
+  quantity  Float
+  unit      String      @default("g")
+  calories  Float       @default(0)
+  protein   Float       @default(0)
+  carbs     Float       @default(0)
+  fat       Float       @default(0)
+  fiber     Float       @default(0)
+  sugar     Float       @default(0)
+  sodium    Float       @default(0)
+  potassium Float       @default(0)
+  vitaminC  Float       @default(0)
+  vitaminD  Float       @default(0)
+  calcium   Float       @default(0)
+  iron      Float       @default(0)
+  imageUrl  String?
+  source    EntrySource @default(manual)
+  notes     String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([userId, date, mealType])
+}
+
+model Goal {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dailyCalories Float
+  proteinG      Float     @default(0)
+  carbsG        Float     @default(0)
+  fatG          Float     @default(0)
+  weightGoalKg  Float?
+  targetDate    DateTime?
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+model ChatMessage {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      ChatRole
+  content   String
+  actions   Json?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+model FileUpload {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fileHash         String
+  fileType         String   // "image" | "pdf"
+  originalName     String?
+  cloudinaryUrl    String
+  processingStatus String   @default("completed") // "pending" | "completed" | "failed"
+  geminiResult     Json?
+  errorMessage     String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([userId, fileHash])
+  @@index([userId, fileHash])
+}
+
