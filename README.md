@@ -18,6 +18,7 @@ NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking
 - [Environment Variables](#-environment-variables)
 - [Setup & Installation](#️-setup--installation)
 - [Testing Deduplication & Caching](#-testing-deduplication--caching)
+- [Deployment on Vercel](#-deployment-on-vercel)
 
 ---
 
@@ -459,9 +460,58 @@ curl -X POST http://localhost:5000/api/ai/analyze-image \
 ```json
 {
   "success": true,
-  "data": { "foodName": "Oatmeal with Berries", "calories": 240, ... },
+  "data": { "foodName": "Oatmeal with Berries", "calories": 240 },
   "source": "redis_cache",
   "duplicate": true
 }
 ```
+
+---
+
+## 🚀 Deployment on Vercel
+
+NutriTrack's frontend (React 19 / Vite) is pre-configured for one-click deployment on **Vercel** with full client-side SPA routing (`vercel.json`) and dynamic API configuration.
+
+### 1. Deploy Frontend to Vercel
+
+1. Push your latest code to GitHub:
+   ```bash
+   git add .
+   git commit -m "Configure Vercel deployment"
+   git push origin main
+   ```
+2. Go to your [Vercel Dashboard](https://vercel.com/dashboard) and click **"Add New Project"**.
+3. Import your `Calorie-Tracker` repository.
+4. In the Project Configuration:
+   - **Framework Preset**: `Vite`
+   - **Root Directory**: `frontend` *(or leave as root `/` — both are pre-configured)*
+   - **Build Command**: `npm run build`
+   - **Output Directory**: `dist`
+5. **Environment Variables**:
+   Add the following variable in Vercel:
+   | Key | Value | Description |
+   |---|---|---|
+   | `VITE_API_URL` | `https://your-backend-api.onrender.com/api` | Your production backend API URL |
+6. Click **Deploy**.
+
+### 2. SPA Route Rewrites (`vercel.json`)
+Client-side routes (`/dashboard`, `/reports`, `/goals`, `/chat`, `/login`) are automatically handled via `frontend/vercel.json`:
+```json
+{
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
+```
+This ensures refreshing any nested page on Vercel loads without 404 errors.
+
+### 3. Backend Deployment (Render / Railway / VPS)
+Because **BullMQ background workers** and **Redis persistent connections** require a continuously running Node.js process, deploy the `backend` directory to a platform like [Render](https://render.com), [Railway](https://railway.app), or any VPS:
+- **Build Command**: `npm install && npx prisma db push`
+- **Start Command**: `npm start`
+- **Environment Variables**: Copy all variables from [`backend/.env.example`](backend/.env.example).
+- Set `CORS_ORIGIN`: Your Vercel frontend URL (e.g. `https://your-app.vercel.app`). The backend is already configured to automatically accept requests from `*.vercel.app` domains.
 
