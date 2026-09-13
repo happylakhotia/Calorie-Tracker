@@ -237,7 +237,7 @@ export default function ReportsPage() {
   };
 
   return (
-    <div className="page-container animate-fade-in" style={{ background: T.bg, minHeight: '100vh', padding: '24px 28px' }}>
+    <div className="page-container animate-fade-in">
       
       {/* ── Header & Range Controls ── */}
       <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 22, flexWrap: 'wrap', gap: 14 }}>

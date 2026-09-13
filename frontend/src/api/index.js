@@ -34,18 +34,75 @@ export const reportApi = {
   mealDistribution: (params) => api.get('/reports/meal-distribution', { params }),
 };
 
+/**
+ * Polls background BullMQ file processing status until 'completed' or 'failed'.
+ */
+const pollUploadStatus = async (fileUploadId, maxAttempts = 40, intervalMs = 1500) => {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const res = await api.get(`/ai/status/${fileUploadId}`);
+    const data = res.data;
+
+    if (data.status === 'completed') {
+      return {
+        data: {
+          success: true,
+          status: 'completed',
+          data: data.data,
+          imported: Array.isArray(data.data) ? data.data.length : undefined,
+          cloudinaryUrl: data.cloudinaryUrl,
+        },
+      };
+    }
+
+    if (data.status === 'failed') {
+      throw new Error(data.error || 'Background processing failed');
+    }
+  }
+  throw new Error('Background AI processing timed out. Please try again.');
+};
+
 export const aiApi = {
-  analyzeImage: (formData) =>
-    api.post('/ai/analyze-image', formData, {
+  analyzeImage: async (formData) => {
+    const res = await api.post('/ai/analyze-image', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 60000,
-    }),
+      timeout: 30000,
+    });
+
+    // If result was already available (cache or deduplication)
+    if (res.data?.status === 'completed' && res.data?.data) {
+      return res;
+    }
+
+    // If enqueued in BullMQ, poll status until completed
+    if (res.data?.fileUploadId && (res.data?.status === 'pending' || res.data?.status === 'processing')) {
+      return await pollUploadStatus(res.data.fileUploadId);
+    }
+
+    return res;
+  },
+
+  importPdf: async (formData) => {
+    const res = await api.post('/ai/import-pdf', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 30000,
+    });
+
+    // If result was already available
+    if (res.data?.status === 'completed' && res.data?.data) {
+      return res;
+    }
+
+    // If enqueued in BullMQ, poll status until completed
+    if (res.data?.fileUploadId && (res.data?.status === 'pending' || res.data?.status === 'processing')) {
+      return await pollUploadStatus(res.data.fileUploadId);
+    }
+
+    return res;
+  },
+
+  getStatus: (id) => api.get(`/ai/status/${id}`),
   chat: (data) => api.post('/ai/chat', data, { timeout: 60000 }),
   getChatHistory: () => api.get('/ai/chat/history'),
   clearChatHistory: () => api.delete('/ai/chat/history'),
-  importPdf: (formData) =>
-    api.post('/ai/import-pdf', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 120000,
-    }),
 };
