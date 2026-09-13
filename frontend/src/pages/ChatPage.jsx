@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Trash2, Bot, User, Loader2, Sparkles } from 'lucide-react';
+import { Send, Trash2, Bot, User, Loader2, Sparkles, Mic, MicOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { aiApi } from '../api';
 import { getApiError } from '../utils/helpers';
@@ -164,8 +164,10 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -200,6 +202,14 @@ export default function ChatPage() {
 
   const sendMessage = useCallback(async (text) => {
     if (!text.trim() || loading) return;
+
+    // Stop listening if mic is active
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (_) {}
+    }
+    setIsListening(false);
 
     const userMsg = { role: 'user', content: text };
     const updatedWithUser = [...messages, userMsg];
@@ -248,6 +258,81 @@ export default function ChatPage() {
       sendMessage(input);
     }
   };
+
+  // ── Voice Input Speech Recognition ──
+  const toggleListening = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      toast.error('Voice input is not supported in this browser. Please use Chrome or Edge.', { icon: '🎙️' });
+      return;
+    }
+
+    if (isListening) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (_) {}
+      }
+      setIsListening(false);
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      const initialText = input.trim();
+
+      recognition.onstart = () => {
+        setIsListening(true);
+      };
+
+      recognition.onresult = (event) => {
+        let transcript = '';
+        for (let i = 0; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        if (transcript) {
+          setInput(initialText ? `${initialText} ${transcript}` : transcript);
+        }
+      };
+
+      recognition.onerror = (event) => {
+        console.warn('Speech recognition error:', event.error);
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          toast.error('Microphone access denied. Please grant permission in your browser.');
+        } else if (event.error !== 'no-speech') {
+          toast.error(`Voice error: ${event.error}`);
+        }
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error('Failed to start speech recognition:', err);
+      toast.error('Could not activate microphone.');
+      setIsListening(false);
+    }
+  };
+
+  // Cleanup speech recognition on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (_) {}
+      }
+    };
+  }, []);
 
   const clearHistory = async () => {
     if (!confirm('Clear all chat history?')) return;
@@ -522,15 +607,16 @@ export default function ChatPage() {
               alignItems: 'center',
               gap: 10,
               background: T.surface2,
-              border: `1.5px solid ${T.border}`,
+              border: isListening ? '1.5px solid oklch(0.6 0.2 25)' : `1.5px solid ${T.border}`,
               borderRadius: 16,
               padding: '6px 8px 6px 16px',
-              transition: 'border-color 0.2s',
+              transition: 'all 0.2s ease',
+              boxShadow: isListening ? '0 0 0 3px oklch(0.6 0.2 25 / 0.15)' : 'none',
             }}>
               <input
                 ref={inputRef}
                 type="text"
-                placeholder="Ask NutriBot or log a meal (e.g. 'I ate 150g salmon with brown rice for dinner')…"
+                placeholder={isListening ? "Listening… speak to NutriBot…" : "Ask NutriBot or log a meal (e.g. 'I ate 150g salmon with brown rice for dinner')…"}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -545,6 +631,64 @@ export default function ChatPage() {
                   color: T.text,
                 }}
               />
+
+              {/* Voice-to-Text Microphone Button */}
+              <button
+                type="button"
+                onClick={toggleListening}
+                id="btn-mic-chat"
+                title={isListening ? 'Listening… click to stop' : 'Click to speak'}
+                disabled={loading}
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 11,
+                  border: 'none',
+                  background: isListening ? 'oklch(0.6 0.2 25 / 0.12)' : 'transparent',
+                  color: isListening ? 'oklch(0.6 0.2 25)' : T.muted,
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  transition: 'all 0.18s ease',
+                  position: 'relative',
+                }}
+                onMouseEnter={(e) => {
+                  if (!isListening) {
+                    e.currentTarget.style.color = T.text;
+                    e.currentTarget.style.background = T.surface;
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isListening) {
+                    e.currentTarget.style.color = T.muted;
+                    e.currentTarget.style.background = 'transparent';
+                  }
+                }}
+              >
+                {isListening ? (
+                  <MicOff size={19} style={{ animation: 'pulse 1s ease-in-out infinite' }} />
+                ) : (
+                  <Mic size={19} />
+                )}
+                {isListening && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      top: 5,
+                      right: 5,
+                      width: 7,
+                      height: 7,
+                      borderRadius: '50%',
+                      background: 'oklch(0.6 0.2 25)',
+                      boxShadow: '0 0 6px oklch(0.6 0.2 25)',
+                    }}
+                  />
+                )}
+              </button>
+
+              {/* Send Button */}
               <button
                 className="btn btn-primary"
                 onClick={() => sendMessage(input)}
