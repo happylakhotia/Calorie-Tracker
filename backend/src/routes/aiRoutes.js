@@ -11,6 +11,7 @@ const {
   getChatHistory,
   clearChatHistory,
   importPdf,
+  getUploadStatus,
 } = require('../controllers/aiController');
 
 // ── Multer memory storage configuration (in-memory for SHA-256 & Cloudinary streaming) ──
@@ -49,5 +50,6 @@ router.post('/chat', validate(schemas.chatSchema), chat);
 router.get('/chat/history', getChatHistory);
 router.delete('/chat/history', clearChatHistory);
 router.post('/import-pdf', pdfUpload.single('pdf'), importPdf);
+router.get('/status/:id', getUploadStatus);
 
 module.exports = router;

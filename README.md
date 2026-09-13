@@ -13,7 +13,7 @@ NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking
   - [Enterprise-Grade Security & Multi-Tenancy](#enterprise-grade-security--multi-tenancy)
 - [System Architecture](#-system-architecture)
 - [Database Schema & Entity Diagrams](#️-database-schema--entity-diagrams)
-- [SHA-256 Deduplication & Redis Cache-Aside](#-sha-256-deduplication--redis-cache-aside)
+- [SHA-256 Deduplication & BullMQ Background Processing](#-sha-256-deduplication--bullmq-background-processing)
 - [API Specifications & Pagination](#-api-specifications--pagination)
 - [Environment Variables](#-environment-variables)
 - [Setup & Installation](#️-setup--installation)
@@ -67,6 +67,8 @@ NutriTrack enforces a strict separation between client, server, cache, database,
 flowchart TD
     Client["React 19 Frontend (Vite)"]
     API["Express.js REST API (Node.js 22)"]
+    Queue[("BullMQ Redis Queue")]
+    Worker["BullMQ Worker (Concurrency: 3)"]
     Redis[("Redis Cloud Cache")]
     DB[("Supabase PostgreSQL DB")]
     Cloudinary["Cloudinary CDN (Media & PDFs)"]
@@ -78,7 +80,12 @@ flowchart TD
     API -->|"Prisma Client Queries"| DB
     DB -->|"Data Records"| API
     API -->|"Stream Upload (RAM Buffer)"| Cloudinary
-    API -->|"Vision & Text Analysis"| Gemini
+    API -->|"Enqueue Job (Non-Blocking)"| Queue
+    Queue -->|"Dispatch Job"| Worker
+    Worker -->|"Download Media"| Cloudinary
+    Worker -->|"Vision & Text Analysis"| Gemini
+    Worker -->|"Save Result & Status"| DB
+    Worker -->|"Cache Analysis Result"| Redis
 ```
 
 ---
@@ -188,44 +195,75 @@ erDiagram
 
 ---
 
-## SHA-256 Deduplication & Redis Cache-Aside
+## SHA-256 Deduplication & BullMQ Background Processing
 
-To eliminate duplicate processing fees and unnecessary Gemini API calls, uploaded media passes through content-addressed deduplication:
+NutriTrack enforces **non-blocking asynchronous processing** for all heavy operations (Gemini image vision, PDF parsing, tabular extraction, and bulk database imports) backed by **BullMQ** on Redis Cloud:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as User
-    participant Server as Express Backend
+    actor User as User / Client
+    participant Server as Express API
     participant Redis as Redis Cloud
     participant DB as Supabase DB
-    participant Cloud as Cloudinary
-    participant AI as Gemini AI
+    participant Cloud as Cloudinary CDN
+    participant Queue as BullMQ Queue
+    participant Worker as BullMQ Worker
+    participant AI as Google Gemini 1.5
 
     User->>Server: Upload Photo / PDF (Multipart)
     Server->>Server: Calculate SHA-256 of file buffer
-    Server->>Redis: Check cache key: gemini:file:{userId}:{fileHash}
+    Server->>Redis: Check cache: gemini:file:{userId}:{fileHash}
 
     alt Redis Cache HIT
         Redis-->>Server: Return cached nutrition JSON
-        Server-->>User:  Instant Response (source: redis_cache, $0 AI cost)
+        Server-->>User: Instant Response (source: redis_cache, $0 AI cost)
     else Redis Cache MISS
         Server->>DB: Check FileUpload table: (userId, fileHash)
-        alt Database HIT (Duplicate)
+        alt Database HIT (Completed Duplicate)
             DB-->>Server: Return stored geminiResult & cloudinaryUrl
             Server->>Redis: Store in Redis (TTL: 30 days)
             Server-->>User: Fast Response (source: database_dedup, $0 AI cost)
         else Database MISS (New File)
             Server->>Cloud: Stream file buffer (upload_stream)
             Cloud-->>Server: Return secure_url
-            Server->>AI: Call Gemini Vision / Document Parser
-            AI-->>Server: Structured nutritional JSON
-            Server->>DB: Insert into FileUpload (userId, fileHash, secure_url, result)
-            Server->>Redis: Cache result (TTL: 30 days)
-            Server-->>User: Full Response (source: gemini_api)
+            Server->>DB: Insert FileUpload (userId, fileHash, status: pending)
+            Server->>Queue: Enqueue BullMQ job (file-processing)
+            Server-->>User: Non-Blocking Response (status: pending, fileUploadId)
+
+            Queue->>Worker: Dispatch background job
+            Worker->>DB: Update status: processing
+            Worker->>Cloud: Download file buffer
+            Worker->>AI: Call Gemini Vision / PDF Parser
+            AI-->>Worker: Structured nutritional JSON
+            Worker->>DB: Update FileUpload (status: completed, geminiResult)
+            Worker->>Redis: Cache analysis (TTL: 30 days)
+
+            opt Client Status Polling
+                User->>Server: GET /api/ai/status/:fileUploadId
+                Server->>DB: Query FileUpload record
+                Server-->>User: Return status: completed + data
+            end
         end
     end
 ```
+
+### BullMQ Worker & Queue Specifications
+
+- **Queue Name**: `file-processing`
+- **Redis Connection**: Dedicated connection with `maxRetriesPerRequest: null` (compliant with BullMQ blocking operations).
+- **Concurrency**: `3` parallel workers.
+- **Retry Policy**: Up to `3` attempts with exponential backoff (`delay: 2000ms`).
+- **Failure Handling**: Exhausted retries automatically record `processingStatus: 'failed'` and save `errorMessage` in the database.
+- **Graceful Shutdown**: Listens for `SIGINT` / `SIGTERM` signals to cleanly drain active jobs before stopping.
+
+### Non-Blocking Status Polling API
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/ai/analyze-image` | `POST` | Upload photo, calculate SHA-256, enqueue job, return `{ status: 'pending', fileUploadId }` immediately. |
+| `/api/ai/import-pdf` | `POST` | Upload PDF, calculate SHA-256, enqueue job, return `{ status: 'pending', fileUploadId }` immediately. |
+| `/api/ai/status/:id` | `GET` | Poll processing status (`pending`, `processing`, `completed`, `failed`) and fetch final Gemini data. |
 
 ### Redis Key Patterns & Expiry (TTL) Policies
 

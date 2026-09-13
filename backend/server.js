@@ -57,11 +57,38 @@ app.use((req, res) => {
 // ── Central Error Handler (must be last) ─────────────────────────────────────
 app.use(errorHandler);
 
+// ── BullMQ Background Worker ──────────────────────────────────────────────────
+const { fileWorker } = require('./src/workers/fileWorker');
+const { fileQueue } = require('./src/queues/fileQueue');
+
 // ── Start Server ──────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n🚀 Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
-  console.log(`📡 API: http://localhost:${PORT}/api/health\n`);
+  console.log(`📡 API: http://localhost:${PORT}/api/health`);
+  if (fileWorker) {
+    console.log(`🐂 BullMQ Worker active and listening for file processing jobs\n`);
+  }
 });
+
+// ── Graceful Shutdown Handlers ────────────────────────────────────────────────
+const shutdown = async (signal) => {
+  console.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`);
+  server.close(async () => {
+    console.log('HTTP server closed.');
+    if (fileWorker) {
+      await fileWorker.close();
+      console.log('BullMQ worker closed.');
+    }
+    if (fileQueue) {
+      await fileQueue.close();
+      console.log('BullMQ queue closed.');
+    }
+    process.exit(0);
+  });
+};
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 module.exports = app;
