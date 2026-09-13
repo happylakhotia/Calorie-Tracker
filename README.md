@@ -1,6 +1,6 @@
 # NutriTrack — Personal Calorie & Nutrition Tracker
 
-NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking platform. Powered by **Google Gemini AI**, backed by **Supabase PostgreSQL (via Prisma ORM)**, accelerated with **Redis Cloud caching**, and integrated with **Cloudinary** for media management with **SHA-256 file content deduplication**.
+NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking platform. Powered by **Google Gemini AI**, backed by **Supabase PostgreSQL (via Prisma ORM)**, accelerated with **Redis caching**, and integrated with **Cloudinary** for media management with **SHA-256 file content deduplication**.
 
 ---
 
@@ -11,14 +11,13 @@ NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking
   - [Visual Reports & Analytics](#visual-reports--analytics)
   - [AI-Powered Capabilities](#ai-powered-capabilities)
   - [Enterprise-Grade Security & Multi-Tenancy](#enterprise-grade-security--multi-tenancy)
-- [📐 System Architecture](#-system-architecture)
-- [🗄️ Database Schema & Entity Diagrams](#️-database-schema--entity-diagrams)
-- [⚡ SHA-256 Deduplication & Redis Cache-Aside](#-sha-256-deduplication--redis-cache-aside)
-- [📡 API Specifications & Pagination](#-api-specifications--pagination)
-- [🔐 Environment Variables](#-environment-variables)
-- [⚙️ Setup & Installation](#️-setup--installation)
-- [🧪 Testing Deduplication & Caching](#-testing-deduplication--caching)
-- [📜 License](#-license)
+- [System Architecture](#-system-architecture)
+- [Database Schema & Entity Diagrams](#️-database-schema--entity-diagrams)
+- [SHA-256 Deduplication & Redis Cache-Aside](#-sha-256-deduplication--redis-cache-aside)
+- [API Specifications & Pagination](#-api-specifications--pagination)
+- [Environment Variables](#-environment-variables)
+- [Setup & Installation](#️-setup--installation)
+- [Testing Deduplication & Caching](#-testing-deduplication--caching)
 
 ---
 
@@ -60,24 +59,26 @@ NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking
 
 ---
 
-## 📐 System Architecture
+## System Architecture
 
 NutriTrack enforces a strict separation between client, server, cache, database, and third-party AI services:
 
 ```mermaid
 flowchart TD
     Client["React 19 Frontend (Vite)"]
-    API["Express.js REST API (Node 22)"]
-    Redis[("Redis Cloud (Cache-Aside)")]
-    DB[("Supabase PostgreSQL (Prisma ORM)")]
+    API["Express.js REST API (Node.js 22)"]
+    Redis[("Redis Cloud Cache")]
+    DB[("Supabase PostgreSQL DB")]
     Cloudinary["Cloudinary CDN (Media & PDFs)"]
     Gemini["Google Gemini 1.5 Flash (AI Vision & LLM)"]
 
-    Client -->|HTTP / JSON & Multipart| API
-    API <-->|Read / Write Cache (TTL)| Redis
-    API <-->|Prisma ORM Client| DB
-    API -->|Stream Upload (RAM Buffer)| Cloudinary
-    API -->|Base64 Image / Text Analysis| Gemini
+    Client -->|"HTTP / JSON & Multipart"| API
+    API -->|"Cache Read / Write"| Redis
+    Redis -->|"Cached Hits (~5ms)"| API
+    API -->|"Prisma Client Queries"| DB
+    DB -->|"Data Records"| API
+    API -->|"Stream Upload (RAM Buffer)"| Cloudinary
+    API -->|"Vision & Text Analysis"| Gemini
 ```
 
 ---
@@ -117,7 +118,7 @@ erDiagram
         String id PK "UUID"
         String userId FK
         String date "YYYY-MM-DD"
-        MealType mealType "breakfast | lunch | dinner | snacks"
+        MealType mealType "breakfast, lunch, dinner, snacks"
         String foodName
         Float quantity
         String unit "default: g"
@@ -134,7 +135,7 @@ erDiagram
         Float calcium
         Float iron
         String imageUrl
-        EntrySource source "manual | ai | pdf"
+        EntrySource source "manual, ai, pdf"
         String notes
         DateTime createdAt
         DateTime updatedAt
@@ -157,7 +158,7 @@ erDiagram
     ChatMessage {
         String id PK "UUID"
         String userId FK
-        ChatRole role "user | assistant"
+        ChatRole role "user, assistant"
         String content
         Json actions
         DateTime createdAt
@@ -168,10 +169,10 @@ erDiagram
         String id PK "UUID"
         String userId FK
         String fileHash "SHA-256 Digest"
-        String fileType "image | pdf"
+        String fileType "image, pdf"
         String originalName
         String cloudinaryUrl
-        String processingStatus "completed | pending | failed"
+        String processingStatus "completed, pending, failed"
         Json geminiResult
         String errorMessage
         DateTime createdAt
@@ -187,7 +188,7 @@ erDiagram
 
 ---
 
-## ⚡ SHA-256 Deduplication & Redis Cache-Aside
+## SHA-256 Deduplication & Redis Cache-Aside
 
 To eliminate duplicate processing fees and unnecessary Gemini API calls, uploaded media passes through content-addressed deduplication:
 
@@ -213,7 +214,7 @@ sequenceDiagram
         alt Database HIT (Duplicate)
             DB-->>Server: Return stored geminiResult & cloudinaryUrl
             Server->>Redis: Store in Redis (TTL: 30 days)
-            Server-->>User: 💾 Fast Response (source: database_dedup, $0 AI cost)
+            Server-->>User: Fast Response (source: database_dedup, $0 AI cost)
         else Database MISS (New File)
             Server->>Cloud: Stream file buffer (upload_stream)
             Cloud-->>Server: Return secure_url
@@ -221,7 +222,7 @@ sequenceDiagram
             AI-->>Server: Structured nutritional JSON
             Server->>DB: Insert into FileUpload (userId, fileHash, secure_url, result)
             Server->>Redis: Cache result (TTL: 30 days)
-            Server-->>User: ✅ Full Response (source: gemini_api)
+            Server-->>User: Full Response (source: gemini_api)
         end
     end
 ```
@@ -237,7 +238,7 @@ sequenceDiagram
 
 ---
 
-## 📡 API Specifications & Pagination
+## API Specifications & Pagination
 
 All endpoints communicate over JSON with standard HTTP status codes. List endpoints support uniform pagination parameters.
 
@@ -307,7 +308,7 @@ All endpoints communicate over JSON with standard HTTP status codes. List endpoi
 
 ---
 
-## 🔐 Environment Variables
+## Environment Variables
 
 Configure `backend/.env` according to the template in [`backend/.env.example`](backend/.env.example):
 
@@ -377,7 +378,7 @@ npm run dev
 
 ---
 
-## 🧪 Testing Deduplication & Caching
+## Testing Deduplication & Caching
 
 ### 1. Authenticate via cURL
 ```bash
@@ -426,8 +427,3 @@ curl -X POST http://localhost:5000/api/ai/analyze-image \
 }
 ```
 
----
-
-## 📜 License
-
-MIT License. Designed and engineered for high-performance, personalized health tracking.
