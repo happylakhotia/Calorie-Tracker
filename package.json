@@ -1,0 +1,11 @@
+{
+  "name": "nutritrack",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NutriTrack - Personal Calorie & Nutrition Tracker",
+  "scripts": {
+    "build": "if [ -d \"frontend\" ]; then cd frontend && npm install && npm run build; else npm install && npm run build; fi",
+    "install:frontend": "cd frontend && npm install",
+    "build:frontend": "cd frontend && npm run build"
+  }
+}
