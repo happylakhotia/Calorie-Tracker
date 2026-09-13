@@ -1,6 +1,6 @@
 # NutriTrack — Personal Calorie & Nutrition Tracker
 
-NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking platform. Powered by **Google Gemini AI**, backed by **Supabase PostgreSQL (via Prisma ORM)**, accelerated with **Redis caching**, and integrated with **Cloudinary** for media management with **SHA-256 file content deduplication**.
+NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking platform. Powered by **Google Gemini AI**, backed by **Supabase PostgreSQL (via Prisma ORM)**, orchestrated with **BullMQ** for non-blocking asynchronous background processing, accelerated with **Redis caching & job queues**, and integrated with **Cloudinary** for media management with **SHA-256 file content deduplication**.
 
 ---
 
@@ -47,9 +47,9 @@ NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking
 - **PDF Report Export**: Generate and download comprehensive nutrition summary reports directly to PDF using `jspdf` and `html2canvas`.
 
 ### AI-Powered Capabilities
-- **AI Food Recognition (Vision)**: Upload a photo of a meal plate or a nutrition facts label. Google Gemini 1.5 Flash extracts nutritional values (calories, macros, micros, confidence score) and pre-fills the logging modal.
+- **AI Food Recognition (Vision)**: Upload a photo of a meal plate or nutrition label. Upload APIs return immediately while BullMQ processes the Gemini 1.5 Flash analysis in the background to extract nutritional values (calories, macros, micros, confidence score) and pre-fill the logging modal.
 - **NutriBot Conversational Coach**: Embedded LLM chat assistant that understands natural language. Can answer nutritional questions, evaluate progress, and automatically execute meal log actions (`ACTION:LOG_ENTRY`) into the database.
-- **Bulk Diary Import via PDF**: Upload exported food diary PDFs. The backend extracts text using `pdf-parse`, parses tabular entries with Gemini, and bulk-inserts them into your database.
+- **Bulk Diary Import via PDF**: Upload exported food diary PDFs. Processed asynchronously in the background via BullMQ workers using `pdf-parse` and Gemini tabular parsing, bulk-inserting entries directly into your database.
 
 ### Enterprise-Grade Security & Multi-Tenancy
 - **Multi-User Isolation**: Complete data segregation. All database queries, caches, and uploaded assets are strictly scoped to the authenticated user ID.
