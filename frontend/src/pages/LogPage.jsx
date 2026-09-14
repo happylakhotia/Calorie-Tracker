@@ -242,10 +242,15 @@ export default function LogPage() {
       const formData = new FormData();
       formData.append('pdf', pdfFile);
       const { data } = await aiApi.importPdf(formData);
-      toast.success(`Successfully imported ${data.imported || 0} entries from PDF! 📄`);
-      setPdfFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      navigate('/dashboard');
+      const count = data.imported ?? (Array.isArray(data.data) ? data.data.length : 0);
+      if (count > 0) {
+        toast.success(`Successfully imported ${count} entries from PDF! 📄`);
+        setPdfFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        navigate('/dashboard');
+      } else {
+        toast.error('No valid nutrition entries found in this PDF. Please check the document format.');
+      }
     } catch (err) {
       toast.error(getApiError(err));
     } finally {

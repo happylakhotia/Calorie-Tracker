@@ -307,28 +307,46 @@ export default function ChatPage() {
       recognition.continuous = false;
       recognition.interimResults = true;
       recognition.lang = 'en-US';
+      recognition.maxAlternatives = 1;
 
-      const initialText = input.trim();
+      // Snapshot the current input before starting so we can append to it
+      const baseText = input.trim();
+      // Track the interim transcript separately so we don't duplicate on final
+      let committedFinal = '';
 
       recognition.onstart = () => {
         setIsListening(true);
       };
 
       recognition.onresult = (event) => {
-        let transcript = '';
-        for (let i = 0; i < event.results.length; i++) {
-          transcript += event.results[i][0].transcript;
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const t = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += t;
+          } else {
+            interimTranscript += t;
+          }
         }
-        if (transcript) {
-          setInput(initialText ? `${initialText} ${transcript}` : transcript);
+
+        if (finalTranscript) {
+          committedFinal += (committedFinal ? ' ' : '') + finalTranscript.trim();
         }
+
+        // Show live preview: base + already-confirmed finals + current interim
+        const preview = [baseText, committedFinal, interimTranscript].filter(Boolean).join(' ');
+        setInput(preview);
       };
 
       recognition.onerror = (event) => {
         console.warn('Speech recognition error:', event.error);
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           toast.error('Microphone access denied. Please grant permission in your browser.');
-        } else if (event.error !== 'no-speech') {
+        } else if (event.error === 'network') {
+          toast.error('Voice recognition needs an internet connection.');
+        } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
           toast.error(`Voice error: ${event.error}`);
         }
         setIsListening(false);
@@ -336,6 +354,11 @@ export default function ChatPage() {
 
       recognition.onend = () => {
         setIsListening(false);
+        // Snap the input to only the confirmed final text (no hanging interim)
+        const finalValue = [baseText, committedFinal].filter(Boolean).join(' ');
+        if (finalValue) {
+          setInput(finalValue);
+        }
       };
 
       recognitionRef.current = recognition;

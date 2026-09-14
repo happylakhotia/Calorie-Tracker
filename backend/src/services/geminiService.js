@@ -26,7 +26,13 @@ const getClient = () => {
  * @returns {object} nutrition data
  */
 const analyzeImage = async (imageInput, mimeType = 'image/jpeg') => {
-  const model = getClient().getGenerativeModel({ model: 'gemini-3.6-flash' });
+  // Fallback model list — verified available via ListModels (newest first)
+  const IMAGE_MODELS = [
+    'gemini-3.8-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-2.5-flash',
+  ];
 
   let base64Image;
   if (Buffer.isBuffer(imageInput)) {
@@ -63,19 +69,44 @@ Extract nutritional information and return ONLY valid JSON (no markdown, no expl
 
 If a value cannot be determined, use 0. Be as accurate as possible.`;
 
-  const result = await model.generateContent([
-    { inlineData: { mimeType, data: base64Image } },
-    prompt,
-  ]);
+  let raw = '';
+  let lastErr = null;
 
-  const text = result.response.text().trim();
+  for (const modelName of IMAGE_MODELS) {
+    try {
+      console.log(`🤖 [analyzeImage] Trying model: ${modelName}`);
+      const model = getClient().getGenerativeModel({ model: modelName });
+      const result = await model.generateContent([
+        { inlineData: { mimeType, data: base64Image } },
+        prompt,
+      ]);
+      raw = result.response.text().trim();
+      if (raw) {
+        console.log(`✅ [analyzeImage] Success with model: ${modelName}`);
+        break;
+      }
+    } catch (err) {
+      lastErr = err;
+      console.warn(`⚠️ [analyzeImage] Model ${modelName} failed:`, err.message);
+    }
+  }
 
-  // Strip potential markdown code fences
-  const jsonString = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  if (!raw && lastErr) throw lastErr;
+  if (!raw) throw new Error('All Gemini models returned empty response for image analysis.');
+
+  // Extract JSON — handle markdown code fences and conversational wrapping
+  let jsonString = raw;
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    jsonString = jsonMatch[0];
+  } else {
+    jsonString = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  }
+
   const parsed = JSON.parse(jsonString);
 
-  // Ensure all numeric fields are numbers
-  const numericFields = ['calories','protein','carbs','fat','fiber','sugar','sodium','potassium','vitaminC','vitaminD','calcium','iron'];
+  // Ensure all numeric fields are proper numbers
+  const numericFields = ['calories', 'protein', 'carbs', 'fat', 'fiber', 'sugar', 'sodium', 'potassium', 'vitaminC', 'vitaminD', 'calcium', 'iron'];
   numericFields.forEach((f) => {
     parsed[f] = parseFloat(parsed[f]) || 0;
   });
@@ -91,46 +122,89 @@ If a value cannot be determined, use 0. Be as accurate as possible.`;
  * @returns {Array} Array of food entry objects
  */
 const parsePdfEntries = async (text) => {
-  const model = getClient().getGenerativeModel({ model: 'gemini-3.6-flash' });
-
+  const today = new Date().toISOString().split('T')[0];
   const prompt = `You are a nutrition data parser. The following text was extracted from a food diary or nutrition history PDF.
 
-Parse ALL food entries you can find and return ONLY a valid JSON array (no markdown, no explanation) with each entry in this format:
-{
-  "date": "YYYY-MM-DD",
-  "mealType": "breakfast|lunch|dinner|snacks",
-  "foodName": "string",
-  "quantity": number,
-  "unit": "string",
-  "calories": number,
-  "protein": number,
-  "carbs": number,
-  "fat": number,
-  "fiber": number,
-  "sugar": number,
-  "sodium": number,
-  "potassium": number,
-  "vitaminC": number,
-  "vitaminD": number,
-  "calcium": number,
-  "iron": number
-}
+Parse ALL food entries you can find and return ONLY a valid JSON array (no markdown code blocks, no explanation) with each entry in this format:
+[
+  {
+    "date": "YYYY-MM-DD",
+    "mealType": "breakfast|lunch|dinner|snacks",
+    "foodName": "string",
+    "quantity": number,
+    "unit": "string",
+    "calories": number,
+    "protein": number,
+    "carbs": number,
+    "fat": number,
+    "fiber": number,
+    "sugar": number,
+    "sodium": number,
+    "potassium": number,
+    "vitaminC": number,
+    "vitaminD": number,
+    "calcium": number,
+    "iron": number
+  }
+]
 
 Rules:
 - Use 0 for missing numeric values.
-- If a date is missing, use today's date in YYYY-MM-DD format.
+- If a date is missing, use today's date (${today}).
 - If meal type is not clear, default to "breakfast".
 - Return an empty array [] if no entries are found.
 
 PDF text:
-${text.substring(0, 8000)}`; // Limit context length
+${text.substring(0, 12000)}`;
 
-  const result = await model.generateContent(prompt);
-  const raw = result.response.text().trim();
-  const jsonString = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  const entries = JSON.parse(jsonString);
+  const models = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-2.5-flash'];
+  let raw = '';
+  let lastErr = null;
 
-  if (!Array.isArray(entries)) throw new Error('AI did not return an array of entries');
+  for (const modelName of models) {
+    try {
+      const model = getClient().getGenerativeModel({ model: modelName });
+      const result = await model.generateContent(prompt);
+      raw = result.response.text().trim();
+      if (raw) break;
+    } catch (err) {
+      lastErr = err;
+      console.warn(`⚠️ [Gemini] Model ${modelName} failed in parsePdfEntries:`, err.message);
+    }
+  }
+
+  if (!raw && lastErr) throw lastErr;
+
+  // Extract JSON array from text even if model wraps in code fences or conversational text
+  let jsonString = raw;
+  const match = raw.match(/\[\s*\{[\s\S]*\}\s*\]/);
+  if (match) {
+    jsonString = match[0];
+  } else {
+    jsonString = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  }
+
+  let entries = [];
+  try {
+    entries = JSON.parse(jsonString);
+  } catch (e) {
+    console.warn('⚠️ [Gemini] Direct JSON parse failed, text was:', raw.slice(0, 300));
+    if (raw.includes('[]')) return [];
+    throw new Error('AI could not extract structured nutrition entries from this document.');
+  }
+
+  if (!Array.isArray(entries)) {
+    if (entries && typeof entries === 'object' && Array.isArray(entries.entries)) {
+      entries = entries.entries;
+    } else if (entries && typeof entries === 'object' && Array.isArray(entries.data)) {
+      entries = entries.data;
+    } else if (entries && typeof entries === 'object') {
+      entries = [entries];
+    } else {
+      entries = [];
+    }
+  }
+
   return entries;
 };
 
@@ -143,7 +217,13 @@ ${text.substring(0, 8000)}`; // Limit context length
  * @returns {string} Assistant response text
  */
 const chatWithAI = async (history, userMsg, context = {}) => {
-  const model = getClient().getGenerativeModel({ model: 'gemini-3.6-flash' });
+  // Fallback model list — verified available via ListModels (newest first)
+  const CHAT_MODELS = [
+    'gemini-3.8-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-2.5-flash',
+  ];
 
   const systemContext = `You are NutriBot, an intelligent, full-capability AI nutrition coach embedded in a personal calorie tracker app.
 
@@ -181,16 +261,34 @@ FORMATTING GUIDELINES:
     parts: [{ text: msg.content }],
   }));
 
-  const chat = model.startChat({
-    history: [
-      { role: 'user', parts: [{ text: systemContext }] },
-      { role: 'model', parts: [{ text: 'Understood! I am NutriBot and ready to assist you with meal logging, goals, and nutrition tracking.' }] },
-      ...chatHistory,
-    ],
-  });
+  let raw = '';
+  let lastErr = null;
 
-  const result = await chat.sendMessage(userMsg);
-  const raw = result.response.text();
+  for (const modelName of CHAT_MODELS) {
+    try {
+      console.log(`🤖 [chatWithAI] Trying model: ${modelName}`);
+      const model = getClient().getGenerativeModel({ model: modelName });
+      const chat = model.startChat({
+        history: [
+          { role: 'user', parts: [{ text: systemContext }] },
+          { role: 'model', parts: [{ text: 'Understood! I am NutriBot and ready to assist you with meal logging, goals, and nutrition tracking.' }] },
+          ...chatHistory,
+        ],
+      });
+      const result = await chat.sendMessage(userMsg);
+      raw = result.response.text();
+      if (raw) {
+        console.log(`✅ [chatWithAI] Success with model: ${modelName}`);
+        break;
+      }
+    } catch (err) {
+      lastErr = err;
+      console.warn(`⚠️ [chatWithAI] Model ${modelName} failed:`, err.message);
+    }
+  }
+
+  if (!raw && lastErr) throw lastErr;
+  if (!raw) throw new Error('All Gemini models returned empty response for chat.');
 
   // Extract ACTION blocks BEFORE stripping them from the visible text
   const actions = [];

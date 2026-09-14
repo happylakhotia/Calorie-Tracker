@@ -8,7 +8,8 @@ const {
   invalidateUserCache,
   TTL,
 } = require('../services/redisService');
-const { addFileJob } = require('../queues/fileQueue');
+const { addFileJob } = require('../queues/fileQueue'); // kept for future use
+
 const { calculateFileHash } = require('../utils/hash');
 const { todayString } = require('../utils/helpers');
 const { createError } = require('../middleware/errorHandler');
@@ -16,18 +17,15 @@ const { createError } = require('../middleware/errorHandler');
 /**
  * POST /api/ai/analyze-image
  *
- * Non-Blocking BullMQ Flow:
+ * Direct In-Memory Flow (no BullMQ queue):
  * 1. Calculate SHA-256 hash of image file contents
- * 2. Check Redis cache for (userId + fileHash)
- *    -> HIT: return instant cached nutrition JSON
- * 3. Check Supabase FileUpload table for (userId, fileHash)
- *    -> Completed HIT: return stored Gemini result without calling Gemini API
- *    -> Pending/Processing HIT: return status 'pending' / 'processing' with fileUploadId
- * 4. NEW FILE (MISS):
- *    -> Upload buffer to Cloudinary CDN (in-memory stream)
- *    -> Create FileUpload record with status 'pending'
- *    -> Enqueue BullMQ background job for Gemini analysis
- *    -> Return HTTP 202 immediately with { status: 'pending', fileUploadId }
+ * 2. Check Redis cache for (userId + fileHash) → instant return on HIT
+ * 3. Check Supabase FileUpload table for completed duplicate → instant return
+ * 4. NEW FILE:
+ *    → Upload buffer to Cloudinary (non-blocking, fire-and-forget)
+ *    → Call Gemini directly in-memory (synchronous, no polling needed)
+ *    → Store result in DB + Redis for future deduplication
+ *    → Return HTTP 200 with completed nutrition data
  */
 const analyzeFood = async (req, res, next) => {
   try {
@@ -71,7 +69,6 @@ const analyzeFood = async (req, res, next) => {
     if (existingUpload) {
       if (existingUpload.processingStatus === 'completed' && existingUpload.geminiResult) {
         console.log(`💾 [DB HIT - Duplicate Detected] Reusing existing Gemini result for user ${userId} without calling Gemini API`);
-        // Populate Redis cache for future requests
         await setCache(cacheKey, existingUpload.geminiResult, TTL.FILE_ANALYSIS);
 
         return res.json({
@@ -85,87 +82,110 @@ const analyzeFood = async (req, res, next) => {
           cloudinaryUrl: existingUpload.cloudinaryUrl,
         });
       }
-
-      if (existingUpload.processingStatus === 'pending' || existingUpload.processingStatus === 'processing') {
-        console.log(`⏳ [In-Flight Duplicate] File ${fileHash.slice(0, 10)}... is already being processed.`);
-        return res.status(202).json({
-          success: true,
-          status: existingUpload.processingStatus,
-          message: 'This file is currently being processed in the background.',
-          fileUploadId: existingUpload.id,
-          fileHash,
-          duplicate: true,
-          cloudinaryUrl: existingUpload.cloudinaryUrl,
-        });
-      }
     }
 
-    // 4. NEW FILE: Upload to Cloudinary CDN
-    console.log(`☁️ [New File] Uploading image to Cloudinary for user ${userId}...`);
-    const cloudinaryResult = await uploadToCloudinary(fileBuffer, {
+    // 4. Upload to Cloudinary in background (non-blocking, fire-and-forget for speed)
+    let cloudinaryUrl = null;
+    uploadToCloudinary(fileBuffer, {
       folder: `calorie-tracker/${userId}/images`,
       resource_type: 'image',
-    });
+    })
+      .then((r) => { cloudinaryUrl = r.secure_url; })
+      .catch((err) => { console.warn('⚠️ Cloudinary upload warning (non-fatal):', err.message); });
 
-    // 5. Create database record with status 'pending'
-    const fileUpload = await prisma.fileUpload.upsert({
+    // 5. Call Gemini directly in-memory — no BullMQ, no polling, synchronous response
+    console.log(`🤖 [analyzeFood] Calling Gemini directly for user ${userId} (${mimetype})...`);
+    const nutritionData = await analyzeImage(fileBuffer, mimetype);
+
+    console.log(`✅ [analyzeFood] Analysis complete: ${nutritionData.foodName || 'Food Item'}`);
+
+    // 6. Store result in DB for future deduplication (non-blocking, non-fatal)
+    prisma.fileUpload.upsert({
       where: { userId_fileHash: { userId, fileHash } },
       create: {
         userId,
         fileHash,
         fileType: 'image',
         originalName,
-        cloudinaryUrl: cloudinaryResult.secure_url,
-        processingStatus: 'pending',
+        cloudinaryUrl,
+        processingStatus: 'completed',
+        geminiResult: nutritionData,
       },
       update: {
-        cloudinaryUrl: cloudinaryResult.secure_url,
-        processingStatus: 'pending',
+        cloudinaryUrl,
+        processingStatus: 'completed',
+        geminiResult: nutritionData,
         errorMessage: null,
       },
-    });
+    }).catch((err) => console.warn('⚠️ [analyzeFood] DB upsert warning (non-fatal):', err.message));
 
-    // 6. Enqueue BullMQ background job (non-blocking)
-    const job = await addFileJob({
-      fileUploadId: fileUpload.id,
-      userId,
-      fileHash,
-      fileType: 'image',
-      cloudinaryUrl: cloudinaryResult.secure_url,
-      originalName,
-      mimeType: mimetype,
-    });
+    // 7. Cache in Redis for instant reuse on repeated uploads
+    await setCache(cacheKey, nutritionData, TTL.FILE_ANALYSIS);
 
-    console.log(`🚀 [Non-Blocking API] Enqueued image job ${job.id} for user ${userId}`);
-
-    return res.status(202).json({
+    return res.status(200).json({
       success: true,
-      status: 'pending',
-      message: 'Image uploaded. Background AI analysis in progress.',
-      fileUploadId: fileUpload.id,
-      jobId: job.id,
+      status: 'completed',
+      message: 'AI image analysis complete.',
+      data: nutritionData,
       fileHash,
-      cloudinaryUrl: cloudinaryResult.secure_url,
       duplicate: false,
     });
   } catch (error) {
+    console.error('❌ [analyzeFood Error]:', error);
     next(error);
   }
+};
+
+// ── Normalization helpers for PDF & Action meal entries ───────────────────────
+const normalizeMealType = (raw) => {
+  if (!raw) return 'breakfast';
+  const m = String(raw).toLowerCase().trim();
+  if (m.includes('snack')) return 'snacks';
+  if (m.includes('break')) return 'breakfast';
+  if (m.includes('lunch')) return 'lunch';
+  if (m.includes('din')) return 'dinner';
+  return 'breakfast';
+};
+
+const sanitizePdfEntry = (e, userId) => {
+  if (!e || typeof e !== 'object') return null;
+  const foodName = String(e.foodName || e.name || e.item || '').trim();
+  if (!foodName) return null;
+
+  return {
+    userId,
+    source: 'pdf',
+    date: e.date && /^\d{4}-\d{2}-\d{2}$/.test(e.date) ? e.date : todayString(),
+    mealType: normalizeMealType(e.mealType),
+    foodName,
+    quantity: Math.max(0.1, parseFloat(e.quantity) || 1),
+    unit: String(e.unit || 'serving').trim().slice(0, 30),
+    calories: Math.max(0, parseFloat(e.calories) || 0),
+    protein: Math.max(0, parseFloat(e.protein) || 0),
+    carbs: Math.max(0, parseFloat(e.carbs) || 0),
+    fat: Math.max(0, parseFloat(e.fat) || 0),
+    fiber: Math.max(0, parseFloat(e.fiber) || 0),
+    sugar: Math.max(0, parseFloat(e.sugar) || 0),
+    sodium: Math.max(0, parseFloat(e.sodium) || 0),
+    potassium: Math.max(0, parseFloat(e.potassium) || 0),
+    vitaminC: Math.max(0, parseFloat(e.vitaminC) || 0),
+    vitaminD: Math.max(0, parseFloat(e.vitaminD) || 0),
+    calcium: Math.max(0, parseFloat(e.calcium) || 0),
+    iron: Math.max(0, parseFloat(e.iron) || 0),
+    notes: e.notes ? String(e.notes).trim().slice(0, 200) : null,
+  };
 };
 
 /**
  * POST /api/ai/import-pdf
  *
- * Non-Blocking BullMQ Flow:
+ * Robust PDF Import Flow:
  * 1. Calculate SHA-256 hash of PDF file contents
- * 2. Check (userId, fileHash) in Redis and Supabase
- *    -> Completed duplicate: reuse entries immediately without calling Gemini API
- *    -> In-flight duplicate: return current status
- * 3. NEW FILE:
- *    -> Upload PDF to Cloudinary
- *    -> Create FileUpload record with status 'pending'
- *    -> Enqueue BullMQ background job (worker extracts text, calls Gemini, bulk-inserts entries)
- *    -> Return HTTP 202 immediately with { status: 'pending', fileUploadId }
+ * 2. Check Redis / DB cache for instant duplicate reuse
+ * 3. Extract text in-memory via pdf-parse
+ * 4. Use Gemini AI with fallback models to parse structured food entries
+ * 5. Sanitize and insert entries into database and invalidate user cache
+ * 6. Return completed result immediately to client
  */
 const importPdf = async (req, res, next) => {
   try {
@@ -185,134 +205,147 @@ const importPdf = async (req, res, next) => {
     const cachedData = await getCache(cacheKey);
     if (cachedData && Array.isArray(cachedData)) {
       console.log(`⚡ [Redis Cache HIT] Reusing parsed PDF entries for user ${userId}`);
-      
-      const entriesToInsert = cachedData.map((e) => ({
-        ...e,
-        userId,
-        source: 'pdf',
-        date: e.date || todayString(),
-      }));
 
-      const result = await prisma.foodEntry.createMany({
-        data: entriesToInsert,
-        skipDuplicates: true,
-      });
+      const entriesToInsert = cachedData
+        .map((e) => sanitizePdfEntry(e, userId))
+        .filter(Boolean);
 
-      await invalidateUserCache(userId);
-
-      return res.status(200).json({
-        success: true,
-        status: 'completed',
-        message: `Reused previous analysis: imported ${result.count} food entries without calling Gemini API.`,
-        imported: result.count,
-        duplicate: true,
-        fileHash,
-        data: cachedData,
-      });
-    }
-
-    // 3. Check Supabase if not in Redis
-    const existingUpload = await prisma.fileUpload.findUnique({
-      where: {
-        userId_fileHash: {
-          userId,
-          fileHash,
-        },
-      },
-    });
-
-    if (existingUpload) {
-      if (existingUpload.processingStatus === 'completed' && Array.isArray(existingUpload.geminiResult)) {
-        console.log(`💾 [DB HIT - Duplicate PDF] Reusing stored Gemini result for user ${userId}`);
-        
-        await setCache(cacheKey, existingUpload.geminiResult, TTL.FILE_ANALYSIS);
-
-        const entriesToInsert = existingUpload.geminiResult.map((e) => ({
-          ...e,
-          userId,
-          source: 'pdf',
-          date: e.date || todayString(),
-        }));
-
+      let importedCount = 0;
+      if (entriesToInsert.length > 0) {
         const result = await prisma.foodEntry.createMany({
           data: entriesToInsert,
           skipDuplicates: true,
         });
-
+        importedCount = result.count;
         await invalidateUserCache(userId);
-
-        return res.status(200).json({
-          success: true,
-          status: 'completed',
-          message: `Reused previous analysis: imported ${result.count} food entries without calling Gemini API.`,
-          imported: result.count,
-          duplicate: true,
-          fileHash,
-          cloudinaryUrl: existingUpload.cloudinaryUrl,
-          data: existingUpload.geminiResult,
-        });
       }
 
-      if (existingUpload.processingStatus === 'pending' || existingUpload.processingStatus === 'processing') {
-        return res.status(202).json({
-          success: true,
-          status: existingUpload.processingStatus,
-          message: 'This PDF is currently being processed in the background.',
-          fileUploadId: existingUpload.id,
-          duplicate: true,
-        });
-      }
+      return res.status(200).json({
+        success: true,
+        status: 'completed',
+        message: `Reused previous analysis: imported ${importedCount} food entries without calling Gemini API.`,
+        imported: importedCount,
+        duplicate: true,
+        fileHash,
+        data: entriesToInsert,
+      });
     }
 
-    // 4. NEW PDF: Upload to Cloudinary & queue BullMQ job
-    console.log(`☁️ [New PDF] Uploading PDF to Cloudinary for user ${userId}...`);
-    const cloudinaryResult = await uploadToCloudinary(fileBuffer, {
-      folder: `calorie-tracker/${userId}/documents`,
-      resource_type: 'auto',
+    // 3. Check Supabase DB for duplicate
+    const existingUpload = await prisma.fileUpload.findUnique({
+      where: {
+        userId_fileHash: { userId, fileHash },
+      },
     });
 
-    // Create FileUpload record in DB
-    const fileUpload = await prisma.fileUpload.upsert({
+    if (existingUpload && existingUpload.processingStatus === 'completed' && Array.isArray(existingUpload.geminiResult)) {
+      console.log(`💾 [DB HIT - Duplicate PDF] Reusing stored Gemini result for user ${userId}`);
+
+      await setCache(cacheKey, existingUpload.geminiResult, TTL.FILE_ANALYSIS);
+
+      const entriesToInsert = existingUpload.geminiResult
+        .map((e) => sanitizePdfEntry(e, userId))
+        .filter(Boolean);
+
+      let importedCount = 0;
+      if (entriesToInsert.length > 0) {
+        const result = await prisma.foodEntry.createMany({
+          data: entriesToInsert,
+          skipDuplicates: true,
+        });
+        importedCount = result.count;
+        await invalidateUserCache(userId);
+      }
+
+      return res.status(200).json({
+        success: true,
+        status: 'completed',
+        message: `Reused previous analysis: imported ${importedCount} food entries without calling Gemini API.`,
+        imported: importedCount,
+        duplicate: true,
+        fileHash,
+        cloudinaryUrl: existingUpload.cloudinaryUrl,
+        data: entriesToInsert,
+      });
+    }
+
+    // 4. Parse PDF in-memory immediately using pdf-parse
+    console.log(`📄 [PDF Parser] Extracting text from PDF buffer for user ${userId}...`);
+    let pdfText = '';
+    try {
+      const pdfData = await pdfParse(fileBuffer);
+      pdfText = pdfData.text || '';
+    } catch (parseErr) {
+      console.warn('⚠️ [pdf-parse] Error extracting text:', parseErr.message);
+    }
+
+    if (!pdfText || pdfText.trim().length < 10) {
+      return next(createError('Could not extract readable text from the uploaded PDF. Please make sure the PDF contains readable text or food logs.', 400));
+    }
+
+    // 5. Upload to Cloudinary in background (non-blocking for performance)
+    let cloudinaryUrl = null;
+    uploadToCloudinary(fileBuffer, {
+      folder: `calorie-tracker/${userId}/documents`,
+      resource_type: 'auto',
+    })
+      .then((res) => { cloudinaryUrl = res.secure_url; })
+      .catch((err) => { console.warn('⚠️ Cloudinary upload warning (non-fatal):', err.message); });
+
+    // 6. Call Gemini to parse nutrition entries
+    console.log(`🤖 [PDF Parser] Calling Gemini to parse entries from text (${pdfText.length} chars)...`);
+    const rawEntries = await parsePdfEntries(pdfText);
+
+    const cleanEntries = (Array.isArray(rawEntries) ? rawEntries : [])
+      .map((e) => sanitizePdfEntry(e, userId))
+      .filter(Boolean);
+
+    let importedCount = 0;
+    if (cleanEntries.length > 0) {
+      const insertResult = await prisma.foodEntry.createMany({
+        data: cleanEntries,
+        skipDuplicates: true,
+      });
+      importedCount = insertResult.count;
+      console.log(`✅ [PDF Parser] Inserted ${importedCount} entries into database for user ${userId}`);
+
+      // Invalidate user cache so dashboard & reports update immediately
+      await invalidateUserCache(userId);
+    }
+
+    // 7. Store result in DB and Redis cache
+    await prisma.fileUpload.upsert({
       where: { userId_fileHash: { userId, fileHash } },
       create: {
         userId,
         fileHash,
         fileType: 'pdf',
         originalName,
-        cloudinaryUrl: cloudinaryResult.secure_url,
-        processingStatus: 'pending',
+        cloudinaryUrl,
+        processingStatus: 'completed',
+        geminiResult: cleanEntries,
       },
       update: {
-        cloudinaryUrl: cloudinaryResult.secure_url,
-        processingStatus: 'pending',
+        cloudinaryUrl,
+        processingStatus: 'completed',
+        geminiResult: cleanEntries,
         errorMessage: null,
       },
     });
 
-    // Enqueue BullMQ background job
-    const job = await addFileJob({
-      fileUploadId: fileUpload.id,
-      userId,
-      fileHash,
-      fileType: 'pdf',
-      cloudinaryUrl: cloudinaryResult.secure_url,
-      originalName,
-      mimeType: 'application/pdf',
-    });
+    await setCache(cacheKey, cleanEntries, TTL.FILE_ANALYSIS);
 
-    console.log(`🚀 [Non-Blocking API] Enqueued PDF job ${job.id} for user ${userId}`);
-
-    return res.status(202).json({
+    return res.status(200).json({
       success: true,
-      status: 'pending',
-      message: 'PDF uploaded. Background parsing and nutrition extraction in progress.',
-      fileUploadId: fileUpload.id,
-      jobId: job.id,
+      status: 'completed',
+      message: `Successfully imported ${importedCount} food entries from PDF!`,
+      imported: importedCount,
+      data: cleanEntries,
       fileHash,
-      cloudinaryUrl: cloudinaryResult.secure_url,
       duplicate: false,
     });
   } catch (error) {
+    console.error('❌ [PDF Import Error]:', error);
     next(error);
   }
 };

@@ -56,39 +56,47 @@ api.interceptors.response.use(
           failedQueue.push({ resolve, reject });
         })
           .then((token) => {
-            original.headers.Authorization = `Bearer ${token}`;
+            if (original.headers?.set) {
+              original.headers.set('Authorization', `Bearer ${token}`);
+            } else if (original.headers) {
+              original.headers.Authorization = `Bearer ${token}`;
+            }
             return api(original);
           })
           .catch((err) => Promise.reject(err));
       }
 
-      original._retry = true;
-      isRefreshing = true;
+  original._retry = true;
+  isRefreshing = true;
 
-      const refreshToken = localStorage.getItem('nutritrack_refresh_token');
+  const refreshToken = localStorage.getItem('nutritrack_refresh_token');
 
-      if (!refreshToken) {
-        isRefreshing = false;
-        clearAuthAndRedirect();
-        return Promise.reject(error);
-      }
+  if (!refreshToken) {
+    isRefreshing = false;
+    clearAuthAndRedirect();
+    return Promise.reject(error);
+  }
 
-      try {
-        const { data } = await axios.post(`${baseURL}/auth/refresh`, { refreshToken });
-        const newAccessToken = data.accessToken;
-        localStorage.setItem('nutritrack_token', newAccessToken);
-        api.defaults.headers.common.Authorization = `Bearer ${newAccessToken}`;
-        processQueue(null, newAccessToken);
-        original.headers.Authorization = `Bearer ${newAccessToken}`;
-        return api(original);
-      } catch (refreshError) {
-        processQueue(refreshError, null);
-        clearAuthAndRedirect();
-        return Promise.reject(refreshError);
-      } finally {
-        isRefreshing = false;
-      }
+  try {
+    const { data } = await axios.post(`${baseURL}/auth/refresh`, { refreshToken });
+    const newAccessToken = data.accessToken;
+    localStorage.setItem('nutritrack_token', newAccessToken);
+    api.defaults.headers.common.Authorization = `Bearer ${newAccessToken}`;
+    processQueue(null, newAccessToken);
+    if (original.headers?.set) {
+      original.headers.set('Authorization', `Bearer ${newAccessToken}`);
+    } else if (original.headers) {
+      original.headers.Authorization = `Bearer ${newAccessToken}`;
     }
+    return api(original);
+  } catch (refreshError) {
+    processQueue(refreshError, null);
+    clearAuthAndRedirect();
+    return Promise.reject(refreshError);
+  } finally {
+    isRefreshing = false;
+  }
+}
 
     return Promise.reject(error);
   }
@@ -98,7 +106,9 @@ function clearAuthAndRedirect() {
   localStorage.removeItem('nutritrack_token');
   localStorage.removeItem('nutritrack_refresh_token');
   localStorage.removeItem('nutritrack_user');
-  window.location.href = '/login';
+  if (window.location.pathname !== '/login' && window.location.pathname !== '/register' && window.location.pathname !== '/') {
+    window.location.href = '/login';
+  }
 }
 
 export default api;

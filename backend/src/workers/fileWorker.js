@@ -33,7 +33,7 @@ if (connection) {
       const { fileUploadId, userId, fileHash, fileType, cloudinaryUrl, mimeType, originalName } = job.data;
       const hashPrefix = fileHash ? fileHash.slice(0, 10) : 'unknown';
 
-      console.log(`\n⚙️ [Worker] Starting job ${job.id} | Type: ${fileType} | Hash: ${hashPrefix}... | User: ${userId}`);
+      console.log(`\n [Worker] Starting job ${job.id} | Type: ${fileType} | Hash: ${hashPrefix}... | User: ${userId}`);
 
       // 1. Verify corresponding upload record in database
       const uploadRecord = await prisma.fileUpload.findUnique({
@@ -41,12 +41,12 @@ if (connection) {
       });
 
       if (!uploadRecord) {
-        console.warn(`⚠️ [Worker] Upload record ${fileUploadId} not found. Skipping.`);
+        console.warn(` [Worker] Upload record ${fileUploadId} not found. Skipping.`);
         return { skipped: true, reason: 'Record not found' };
       }
 
       if (uploadRecord.processingStatus === 'completed' && uploadRecord.geminiResult) {
-        console.log(`ℹ️ [Worker] Job ${job.id} already completed in database. Skipping.`);
+        console.log(` [Worker] Job ${job.id} already completed in database. Skipping.`);
         return { skipped: true, reason: 'Already completed' };
       }
 
@@ -57,14 +57,14 @@ if (connection) {
       });
 
       // 3. Download file buffer from Cloudinary
-      console.log(`⬇️ [Worker] Downloading file buffer from Cloudinary (${originalName || fileType})...`);
+      console.log(` [Worker] Downloading file buffer from Cloudinary (${originalName || fileType})...`);
       const buffer = await downloadFileBuffer(cloudinaryUrl);
 
       const cacheKey = `gemini:file:${userId}:${fileHash}`;
 
       // 4. Process file based on type
       if (fileType === 'image') {
-        console.log(`🤖 [Worker] Calling Gemini Vision API for image analysis...`);
+        console.log(`[Worker] Calling Gemini Vision API for image analysis...`);
         const nutritionData = await analyzeImage(buffer, mimeType || 'image/jpeg');
 
         // Attach Cloudinary URL to nutrition result
@@ -84,18 +84,18 @@ if (connection) {
         await setCache(cacheKey, nutritionData, TTL.FILE_ANALYSIS);
 
         const duration = Date.now() - startTime;
-        console.log(`✅ [Worker] Image analysis completed for job ${job.id} in ${duration}ms (Food: ${nutritionData.foodName || 'Item'})`);
+        console.log(`[Worker] Image analysis completed for job ${job.id} in ${duration}ms (Food: ${nutritionData.foodName || 'Item'})`);
 
         return { success: true, type: 'image', foodName: nutritionData.foodName, durationMs: duration };
       } else if (fileType === 'pdf') {
-        console.log(`📄 [Worker] Extracting text from PDF buffer...`);
+        console.log(`[Worker] Extracting text from PDF buffer...`);
         const pdfData = await pdfParse(buffer);
 
         if (!pdfData.text || pdfData.text.trim().length < 10) {
           throw new Error('Could not extract readable text from the uploaded PDF.');
         }
 
-        console.log(`🤖 [Worker] Calling Gemini API to parse tabular food entries from PDF text...`);
+        console.log(`[Worker] Calling Gemini API to parse tabular food entries from PDF text...`);
         const parsedEntries = await parsePdfEntries(pdfData.text);
 
         let importedCount = 0;
@@ -133,7 +133,7 @@ if (connection) {
         await setCache(cacheKey, parsedEntries, TTL.FILE_ANALYSIS);
 
         const duration = Date.now() - startTime;
-        console.log(`✅ [Worker] PDF processing completed for job ${job.id} in ${duration}ms (${importedCount} entries inserted)`);
+        console.log(`[Worker] PDF processing completed for job ${job.id} in ${duration}ms (${importedCount} entries inserted)`);
 
         return { success: true, type: 'pdf', imported: importedCount, durationMs: duration };
       } else {
@@ -148,11 +148,11 @@ if (connection) {
 
   // ── Worker Lifecycle Event Handlers ──
   fileWorker.on('completed', (job, result) => {
-    console.log(`🎉 [Worker Event] Job ${job.id} marked completed.`);
+    console.log(` [Worker Event] Job ${job.id} marked completed.`);
   });
 
   fileWorker.on('failed', async (job, err) => {
-    console.error(`❌ [Worker Event] Job ${job?.id} failed on attempt ${job?.attemptsMade}/${job?.opts?.attempts}:`, err.message);
+    console.error(`[Worker Event] Job ${job?.id} failed on attempt ${job?.attemptsMade}/${job?.opts?.attempts}:`, err.message);
 
     // If job has exhausted all retry attempts, update DB record to failed
     if (job && job.attemptsMade >= (job.opts?.attempts || 3)) {
@@ -166,16 +166,16 @@ if (connection) {
               errorMessage: err.message,
             },
           });
-          console.log(`📝 [Worker Event] Upload record ${fileUploadId} marked as 'failed' in DB.`);
+          console.log(` [Worker Event] Upload record ${fileUploadId} marked as 'failed' in DB.`);
         } catch (dbErr) {
-          console.error(`⚠️ [Worker Event] Failed to update upload record ${fileUploadId} to failed:`, dbErr.message);
+          console.error(`[Worker Event] Failed to update upload record ${fileUploadId} to failed:`, dbErr.message);
         }
       }
     }
   });
 
   fileWorker.on('error', (err) => {
-    console.warn('⚠️ [Worker Error]:', err.message);
+    console.warn('[Worker Error]:', err.message);
   });
 }
 

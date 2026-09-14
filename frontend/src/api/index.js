@@ -65,8 +65,7 @@ const pollUploadStatus = async (fileUploadId, maxAttempts = 40, intervalMs = 150
 export const aiApi = {
   analyzeImage: async (formData) => {
     const res = await api.post('/ai/analyze-image', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 30000,
+      timeout: 45000,
     });
 
     // If result was already available (cache or deduplication)
@@ -84,12 +83,11 @@ export const aiApi = {
 
   importPdf: async (formData) => {
     const res = await api.post('/ai/import-pdf', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 30000,
+      timeout: 60000,
     });
 
-    // If result was already available
-    if (res.data?.status === 'completed' && res.data?.data) {
+    // If result was already available or completed synchronously
+    if (res.data?.status === 'completed') {
       return res;
     }
 
