@@ -275,18 +275,43 @@ export default function GoalsPage() {
   const finishDate = estimateFinish();
 
   return (
-    <div style={{ background: T.bg, minHeight: '100vh', padding: '24px 28px' }}>
+    <div className="goals-page-root" style={{ padding: '24px 28px', background: T.bg, minHeight: '100vh' }}>
+      <style>{`
+        @media (max-width: 768px) {
+          .goals-page-root {
+            padding: 16px 14px !important;
+          }
+          .goals-header-title {
+            font-size: 20px !important;
+          }
+          .goals-main-grid {
+            grid-template-columns: 1fr !important;
+          }
+          .goals-fields-grid {
+            grid-template-columns: 1fr !important;
+          }
+          .goals-progress-grid {
+            grid-template-columns: repeat(2, 1fr) !important;
+          }
+        }
+        @media (max-width: 480px) {
+          .goals-progress-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
+
       {/* ── Page header ── */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 style={{ fontSize: 24, fontWeight: 800, color: T.text, margin: 0, letterSpacing: '-0.4px' }}>
+          <h1 className="goals-header-title" style={{ fontSize: 24, fontWeight: 800, color: T.text, margin: 0, letterSpacing: '-0.4px' }}>
             Health Goals
           </h1>
           <p style={{ fontSize: 13, color: T.muted, marginTop: 3 }}>
             Your targets drive every ring, chart and nudge in the app
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
             className="btn btn-secondary"
             type="button"
@@ -312,7 +337,7 @@ export default function GoalsPage() {
 
       <form onSubmit={handleSave}>
         {/* ── Main 3-col grid ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, alignItems: 'start' }}>
+        <div className="goals-main-grid" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, alignItems: 'start' }}>
 
           {/* ── Left: Daily nutrition targets ── */}
           <Card>
@@ -326,7 +351,7 @@ export default function GoalsPage() {
             </div>
 
             {/* Fields grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div className="goals-fields-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
               <Field label="Daily calories (kcal)" hint="Suggested for your plan">
                 <input
                   id="input-goal-calories"
@@ -563,7 +588,7 @@ export default function GoalsPage() {
               <Target size={16} color={T.primary} /> Goal vs actual
             </span>
           </SectionTitle>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
+          <div className="goals-progress-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
             {progress.map((p) => {
               const remaining = p.target - p.value;
               return (

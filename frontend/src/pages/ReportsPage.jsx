@@ -320,7 +320,25 @@ export default function ReportsPage() {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-          {/* Row 1: Weekly calories + Meal distribution */}
+      <style>{`
+        @media (max-width: 768px) {
+          .reports-pie-wrapper {
+            flex-direction: column !important;
+            justify-content: center !important;
+            gap: 16px !important;
+          }
+          .reports-pie-donut {
+            width: 100% !important;
+            max-width: 220px !important;
+            height: 210px !important;
+          }
+          .reports-pie-legend {
+            width: 100% !important;
+          }
+        }
+      `}</style>
+
+      {/* Row 1: Weekly calories + Meal distribution */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 20 }}>
             
             {/* Component 1: Weekly calorie trend */}
@@ -390,16 +408,16 @@ export default function ReportsPage() {
               {pieData.length === 0 ? (
                 <div className="empty-state" style={{ padding: '40px 0', textAlign: 'center', color: T.muted }}><p>No data</p></div>
               ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 24, minHeight: 260 }}>
-                  <div style={{ width: '50%', height: 230 }}>
+                <div className="reports-pie-wrapper" style={{ display: 'flex', alignItems: 'center', gap: 24, minHeight: 260 }}>
+                  <div className="reports-pie-donut" style={{ width: '50%', height: 230 }}>
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
                         <Pie
                           data={pieData}
                           cx="50%"
                           cy="50%"
-                          innerRadius={50}
-                          outerRadius={84}
+                          innerRadius={48}
+                          outerRadius={80}
                           dataKey="value"
                           paddingAngle={4}
                         >
@@ -411,7 +429,7 @@ export default function ReportsPage() {
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div className="reports-pie-legend" style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {pieData.map((d, idx) => (
                       <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div style={{ width: 12, height: 12, borderRadius: 4, background: PIE_COLORS[idx % PIE_COLORS.length], flexShrink: 0 }} />

@@ -375,19 +375,45 @@ export default function ChatPage() {
   };
 
   return (
-    <div
-      style={{
-        background: T.bg,
-        height: 'calc(100vh - var(--topbar-height, 64px))',
-        maxHeight: 'calc(100vh - var(--topbar-height, 64px))',
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
-        padding: '16px 28px 18px',
-        boxSizing: 'border-box',
-      }}
-      className="animate-fade-in"
-    >
+    <div className="chat-page-root animate-fade-in">
+      <style>{`
+        .chat-page-root {
+          background: ${T.bg};
+          height: calc(100vh - var(--topbar-height, 64px));
+          max-height: calc(100vh - var(--topbar-height, 64px));
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          padding: 20px 24px;
+          box-sizing: border-box;
+          width: 100%;
+        }
+        @media (max-width: 768px) {
+          .chat-page-root {
+            height: 100% !important;
+            max-height: 100% !important;
+            padding: 8px 10px 10px !important;
+          }
+          .chat-bot-avatar {
+            width: 36px !important;
+            height: 36px !important;
+            border-radius: 10px !important;
+          }
+          .chat-bot-title {
+            font-size: 18px !important;
+          }
+          .chat-header-desc {
+            display: none !important;
+          }
+          .chat-main-card {
+            border-radius: 16px !important;
+          }
+          .chat-msg-row {
+            max-width: 92% !important;
+            gap: 8px !important;
+          }
+        }
+      `}</style>
       <div style={{
         maxWidth: 1080,
         width: '100%',
@@ -396,13 +422,13 @@ export default function ChatPage() {
         flexDirection: 'column',
         height: '100%',
         minHeight: 0,
-        gap: 12,
+        gap: 10,
       }}>
 
         {/* ── Fixed Page Header (Never scrolls) ── */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div className="chat-bot-avatar" style={{
               width: 44,
               height: 44,
               borderRadius: 14,
@@ -413,31 +439,32 @@ export default function ChatPage() {
               justifyContent: 'center',
               color: T.primaryDark,
               boxShadow: '0 2px 8px rgba(45,90,67,0.12)',
+              flexShrink: 0,
             }}>
-              <Bot size={24} />
+              <Bot size={22} />
             </div>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <h1 style={{ fontSize: 21, fontWeight: 800, color: T.text, margin: 0, letterSpacing: '-0.3px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <h1 className="chat-bot-title" style={{ fontSize: 21, fontWeight: 800, color: T.text, margin: 0, letterSpacing: '-0.3px' }}>
                   NutriBot AI
                 </h1>
                 <span style={{
-                  fontSize: 11.5,
+                  fontSize: 11,
                   fontWeight: 700,
-                  padding: '3px 9px',
+                  padding: '2px 8px',
                   borderRadius: 99,
                   background: 'oklch(0.88 0.08 165 / 0.35)',
                   color: T.primaryDark,
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 5,
+                  gap: 4,
                   border: `1px solid oklch(0.88 0.08 165 / 0.6)`,
                 }}>
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.primary }} />
-                  Online · Gemini AI
+                  Gemini AI
                 </span>
               </div>
-              <p style={{ fontSize: 12.5, color: T.muted, marginTop: 2, margin: 0 }}>
+              <p className="chat-header-desc" style={{ fontSize: 12, color: T.muted, marginTop: 2, margin: 0 }}>
                 Natural meal logging, calorie estimations & nutrition coaching
               </p>
             </div>
@@ -447,9 +474,9 @@ export default function ChatPage() {
             className="btn btn-secondary"
             onClick={clearHistory}
             id="btn-clear-chat"
-            style={{ fontSize: 13, gap: 6, padding: '7px 14px', borderRadius: 10 }}
+            style={{ fontSize: 12.5, gap: 5, padding: '6px 12px', borderRadius: 10, flexShrink: 0 }}
           >
-            <Trash2 size={14} /> Clear chat
+            <Trash2 size={13} /> Clear
           </button>
         </div>
 

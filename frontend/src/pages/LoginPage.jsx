@@ -73,14 +73,36 @@ export default function LoginPage() {
     }
   };
 
-
   return (
-    <div style={{
-      display: 'grid',
-      minHeight: '100vh',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
-      background: T.bg,
-    }}>
+    <div className="login-page-root">
+      <style>{`
+        .login-page-root {
+          display: grid;
+          min-height: 100vh;
+          grid-template-columns: 1fr 1fr;
+          background: ${T.bg};
+          width: 100%;
+        }
+        @media (max-width: 860px) {
+          .login-page-root {
+            grid-template-columns: 1fr !important;
+          }
+          .login-hero-panel {
+            display: none !important;
+          }
+          .login-form-container {
+            padding: 24px 16px !important;
+            min-height: 100vh;
+          }
+          .login-form-card {
+            padding: 24px 20px 22px !important;
+            border-radius: 18px !important;
+          }
+          .login-mobile-brand {
+            display: flex !important;
+          }
+        }
+      `}</style>
       {/* ── Left Hero Panel (Hidden on small mobile, flex on desktop) ── */}
       <div
         className="login-hero-panel"
@@ -96,7 +118,7 @@ export default function LoginPage() {
         }}
       >
         {/* Brand */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => navigate('/')}>
           <span style={{
             display: 'grid',
             placeItems: 'center',
@@ -110,7 +132,7 @@ export default function LoginPage() {
             <Flame size={20} color="#FFFFFF" />
           </span>
           <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.3px', color: '#FFFFFF' }}>
-            Nutritrack
+            NutriTrack
           </span>
         </div>
 
@@ -133,56 +155,78 @@ export default function LoginPage() {
             margin: '0 0 28px 0',
             color: '#FFFFFF',
           }}>
-            Snap a plate, chat a sentence, or fill the form — your calories, macros and micros land in one private
-            place with weekly reports to match.
+            Log with photos, conversational chat, or manual entry. View macro and micronutrient trends that help you stay consistent.
           </p>
-          <ul style={{
-            listStyle: 'none',
-            padding: 0,
-            margin: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 12,
-            opacity: 0.95,
-          }}>
-            {FEATURES.map((item) => (
-              <li key={item} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {FEATURES.map((feat) => (
+              <div key={feat} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14 }}>
                 <span style={{
-                  width: 6,
-                  height: 6,
+                  display: 'grid',
+                  placeItems: 'center',
+                  width: 20,
+                  height: 20,
                   borderRadius: '50%',
-                  background: '#FFFFFF',
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  fontSize: 11,
+                  fontWeight: 700,
                   flexShrink: 0,
-                }} />
-                <span>{item}</span>
-              </li>
+                }}>
+                  ✓
+                </span>
+                <span style={{ opacity: 0.95 }}>{feat}</span>
+              </div>
             ))}
-          </ul>
+          </div>
         </div>
 
-        {/* Footer info */}
-        <p style={{ fontSize: 12, opacity: 0.65, margin: 0, color: '#FFFFFF' }}>
-          Nutritrack @Happy
-        </p>
+        {/* Footer */}
+        <div style={{ fontSize: 12.5, opacity: 0.65 }}>
+          © {new Date().getFullYear()} Nutritrack @Happy · All rights reserved.
+        </div>
       </div>
 
-      {/* ── Right Auth Form Panel ── */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '32px 24px',
-      }}>
-        <div style={{
-          width: '100%',
-          maxWidth: 400,
-          background: T.surface,
-          border: `1px solid ${T.border}`,
-          borderRadius: 22,
-          padding: '32px 32px 28px',
-          boxShadow: T.cardShadow,
-          boxSizing: 'border-box',
-        }}>
+      {/* ── Right Form Panel ── */}
+      <div
+        className="login-form-container"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '32px 24px',
+        }}
+      >
+        <div
+          className="login-form-card"
+          style={{
+            width: '100%',
+            maxWidth: 400,
+            background: T.surface,
+            border: `1px solid ${T.border}`,
+            borderRadius: 22,
+            padding: '32px 32px 28px',
+            boxShadow: T.cardShadow,
+            boxSizing: 'border-box',
+          }}
+        >
+          {/* Mobile Brand Logo */}
+          <div
+            className="login-mobile-brand"
+            onClick={() => navigate('/')}
+            style={{
+              display: 'none',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              marginBottom: 20,
+              cursor: 'pointer',
+            }}
+          >
+            <div style={{ width: 34, height: 34, borderRadius: 10, background: T.primary, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Flame size={18} color="#FFFFFF" />
+            </div>
+            <span style={{ fontSize: 19, fontWeight: 800, color: T.text, letterSpacing: '-0.3px' }}>NutriTrack</span>
+          </div>
+
           {/* Tabs */}
           <div style={{
             marginBottom: 24,

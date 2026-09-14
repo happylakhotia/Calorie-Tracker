@@ -254,12 +254,36 @@ export default function LogPage() {
   };
 
   return (
-    <div style={{ background: T.bg, minHeight: '100vh', padding: '28px 32px' }} className="animate-fade-in">
+    <div style={{ background: T.bg, minHeight: '100vh', padding: '28px 32px' }} className="animate-fade-in log-page-root">
+      <style>{`
+        @media (max-width: 768px) {
+          .log-page-root {
+            padding: 16px 14px !important;
+          }
+          .log-form-card {
+            padding: 18px 16px !important;
+            border-radius: 16px !important;
+          }
+          .log-header-row {
+            flex-wrap: wrap !important;
+            gap: 12px !important;
+          }
+          .log-btn-group {
+            flex-direction: column !important;
+            width: 100% !important;
+            gap: 10px !important;
+          }
+          .log-btn-group .btn {
+            width: 100% !important;
+            justify-content: center !important;
+          }
+        }
+      `}</style>
       {/* ── Generous Container ── */}
       <div style={{ maxWidth: 1180, margin: '0 auto' }}>
         
         {/* ── Page Header ── */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 14 }}>
+        <div className="log-header-row" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, gap: 14 }}>
           <div>
             <h1 style={{ fontSize: 26, fontWeight: 800, color: T.text, margin: 0, letterSpacing: '-0.4px' }}>
               Log a Meal
@@ -294,6 +318,7 @@ export default function LogPage() {
         <div
           ref={formCardRef}
           id="section-direct-food-entry"
+          className="log-form-card"
           style={{
             background: T.surface,
             border: `1.5px solid ${T.border}`,
@@ -418,7 +443,7 @@ export default function LogPage() {
             </div>
 
             {/* Row 3: Quantity & Unit */}
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 14 }}>
               <div>
                 <label className="form-label required" htmlFor="input-quick-quantity" style={{ fontWeight: 600, fontSize: 13, color: T.text, marginBottom: 6, display: 'block' }}>
                   Quantity
@@ -455,11 +480,11 @@ export default function LogPage() {
             </div>
 
             {/* Row 4: Macronutrients Container */}
-            <div style={{ background: T.surface2, borderRadius: 16, padding: '18px 20px', border: `1px solid ${T.border}` }}>
+            <div style={{ background: T.surface2, borderRadius: 16, padding: '16px 18px', border: `1px solid ${T.border}` }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: T.secondary, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Flame size={16} color={T.primary} /> Macronutrients (Optional / Auto-calculated by AI)
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 12 }}>
                 <div>
                   <label className="form-label" htmlFor="input-quick-calories" style={{ fontSize: 12, fontWeight: 600, color: T.muted, marginBottom: 4, display: 'block' }}>
                     Calories (kcal)
@@ -595,15 +620,15 @@ export default function LogPage() {
             </div>
 
             {/* Row 7: Action Buttons */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap', paddingTop: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', paddingTop: 6 }}>
               <button
                 type="button"
                 className="btn btn-secondary"
                 onClick={() => openModal(quickForm.mealType)}
                 id="btn-open-modal-entry"
-                style={{ fontSize: 13.5, gap: 6, borderRadius: 10, padding: '10px 18px' }}
+                style={{ fontSize: 13, gap: 6, borderRadius: 10, padding: '10px 16px', flex: '1 1 auto' }}
               >
-                Open in Full Popup Modal
+                Open in Full Popup
               </button>
 
               <button
@@ -612,12 +637,14 @@ export default function LogPage() {
                 disabled={quickLoading}
                 id="btn-quick-log-submit"
                 style={{
-                  fontSize: 14.5,
+                  fontSize: 14,
                   fontWeight: 700,
                   gap: 8,
                   borderRadius: 12,
-                  padding: '12px 28px',
+                  padding: '12px 24px',
                   boxShadow: '0 4px 14px rgba(45,90,67,0.22)',
+                  flex: '1 1 auto',
+                  justifyContent: 'center',
                 }}
               >
                 {quickLoading ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <CheckCircle2 size={17} />}

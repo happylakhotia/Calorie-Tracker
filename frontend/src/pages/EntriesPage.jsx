@@ -67,9 +67,9 @@ export default function EntriesPage() {
   return (
     <div className="page-container animate-fade-in">
       {/* Header */}
-      <div className="page-header">
+      <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 className="page-title">Food Entries</h1>
+          <h1 className="page-title" style={{ fontSize: 'clamp(20px, 4vw, 26px)' }}>Food Entries</h1>
           <p className="page-subtitle">Browse and manage all your logged meals</p>
         </div>
         <button className="btn btn-primary" onClick={openAdd} id="btn-add-entry">
@@ -79,7 +79,7 @@ export default function EntriesPage() {
 
       {/* Filters */}
       <div className="card" style={{ marginBottom: 'var(--space-6)' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-4)', alignItems: 'flex-end' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 'var(--space-3)', alignItems: 'flex-end' }}>
           <div className="form-group">
             <label className="form-label">Start Date</label>
             <input
@@ -153,7 +153,16 @@ export default function EntriesPage() {
             </button>
           </div>
         ) : (
-          <div className="table-wrapper" style={{ border: 'none' }}>
+          <div className="table-wrapper" style={{ border: 'none', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            <div style={{
+              fontSize: 11,
+              color: 'var(--text-muted)',
+              padding: '6px 14px',
+              background: 'var(--color-surface-2)',
+              borderBottom: '1px solid var(--color-border)',
+            }}>
+              👉 Scroll table horizontally to view macros & actions
+            </div>
             <table>
               <thead>
                 <tr>

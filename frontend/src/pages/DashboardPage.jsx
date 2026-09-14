@@ -488,12 +488,36 @@ export default function DashboardPage() {
 
   return (
     <div style={{ background: T.bg, minHeight: '100vh' }}>
-      <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <style>{`
+        @media (max-width: 768px) {
+          .dashboard-root {
+            padding: 16px 14px !important;
+            gap: 12px !important;
+          }
+          .dashboard-header-row {
+            flex-wrap: wrap !important;
+            gap: 12px !important;
+          }
+          .dashboard-header-title {
+            font-size: 21px !important;
+          }
+          .dashboard-habit-grid {
+            gap: 4px !important;
+          }
+          .dashboard-habit-btn {
+            width: 100% !important;
+            max-width: 40px !important;
+            height: 38px !important;
+            font-size: 13px !important;
+          }
+        }
+      `}</style>
+      <div className="dashboard-root" style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 6 }}>
 
         {/* ── Header ── */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+        <div className="dashboard-header-row" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
           <div>
-            <h1 style={{ fontSize: 24, fontWeight: 800, color: T.text, margin: 0, letterSpacing: '-0.4px' }}>
+            <h1 className="dashboard-header-title" style={{ fontSize: 24, fontWeight: 800, color: T.text, margin: 0, letterSpacing: '-0.4px' }}>
               {getGreeting()}, {firstName}
             </h1>
             <p style={{ fontSize: 12, color: T.muted, marginTop: 3 }}>
@@ -521,7 +545,7 @@ export default function DashboardPage() {
         </div>
 
         {/* ── Row 1: Today's Energy (2/3) + Habit Loop (1/3) ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, alignItems: 'stretch' }}>
+        <div className="responsive-grid-2-1" style={{ alignItems: 'stretch' }}>
 
           {/* Energy Summary Card */}
           <Card style={{ height: '100%', display: 'flex', flexDirection: 'column', opacity: dayLoading ? 0.65 : 1, transition: 'opacity 0.2s' }}>
@@ -595,7 +619,7 @@ export default function DashboardPage() {
               </SectionTitle>
 
               {/* Week day boxes */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, margin: '10px 0 12px' }}>
+              <div className="dashboard-habit-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6, margin: '10px 0 12px' }}>
                 {weekDays.map((d) => {
                   let bg = T.surface3;
                   let color = T.secondary;
@@ -635,6 +659,7 @@ export default function DashboardPage() {
                     >
                       <button
                         type="button"
+                        className="dashboard-habit-btn"
                         style={{
                           width: 40, height: 40, borderRadius: 12, display: 'flex', alignItems: 'center',
                           justifyContent: 'center', fontSize: 14, fontWeight: 700, margin: '0 auto',
@@ -651,7 +676,7 @@ export default function DashboardPage() {
                         {d.short}
                       </button>
                       <span style={{
-                        fontSize: 11,
+                        fontSize: 10.5,
                         fontWeight: d.isSelected || d.isToday ? 700 : 500,
                         color: d.isSelected || d.isToday ? T.primary : T.muted,
                         marginTop: 6,
@@ -708,7 +733,7 @@ export default function DashboardPage() {
         </div>
 
         {/* ── Row 2: Meals (2/3) + Right column (1/3) ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, alignItems: 'start', marginTop: 4 }}>
+        <div className="responsive-grid-2-1" style={{ alignItems: 'start', marginTop: 4 }}>
 
           {/* Meals card */}
           <Card style={{ opacity: dayLoading ? 0.65 : 1, transition: 'opacity 0.2s' }}>

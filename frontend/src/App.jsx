@@ -12,6 +12,12 @@ import ReportsPage from './pages/ReportsPage';
 import GoalsPage from './pages/GoalsPage';
 import ChatPage from './pages/ChatPage';
 
+import MobileNavBar from './components/MobileNavBar';
+import useAuth from './context/useAuth';
+import { getInitials } from './utils/helpers';
+import { Flame, LogOut } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+
 // Page title mapping
 const PAGE_TITLES = {
   '/dashboard': '',           // dashboard has its own full header
@@ -24,17 +30,47 @@ const PAGE_TITLES = {
 
 function AppLayout({ children }) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const title = PAGE_TITLES[location.pathname] ?? 'NutriTrack';
   const isDashboard = location.pathname === '/dashboard';
   const isChat = location.pathname === '/chat';
+
+  const handleLogout = () => {
+    logout();
+    navigate('/');
+  };
 
   return (
     <div
       className="app-layout"
       style={isChat ? { height: '100vh', maxHeight: '100vh', overflow: 'hidden' } : undefined}
     >
+      {/* Desktop Sidebar (hidden <= 768px via CSS) */}
       <Sidebar />
-      {/* Topbar — hidden on dashboard since it has its own header */}
+
+      {/* Mobile Top Header (only visible <= 768px via CSS) */}
+      <header className="mobile-header">
+        <div className="mobile-header-brand" onClick={() => navigate('/dashboard')}>
+          <div className="mobile-header-logo">
+            <Flame size={18} color="#FFFFFF" />
+          </div>
+          <span className="mobile-header-title">NutriTrack</span>
+        </div>
+        <div className="mobile-header-user">
+          <div
+            className="mobile-user-badge"
+            onClick={handleLogout}
+            title={`Logged in as ${user?.name || 'User'}. Tap to log out.`}
+            id="mobile-btn-logout"
+          >
+            <span className="mobile-avatar">{getInitials(user?.name)}</span>
+            <LogOut size={13} className="mobile-logout-icon" />
+          </div>
+        </div>
+      </header>
+
+      {/* Desktop Topbar — hidden on dashboard since it has its own header, hidden on mobile */}
       {!isDashboard && (
         <header className="topbar">
           <span className="topbar-title">{title}</span>
@@ -42,15 +78,19 @@ function AppLayout({ children }) {
           </div>
         </header>
       )}
+
       <main
-        className="main-content"
+        className={`main-content${isChat ? ' is-chat-page' : ''}`}
         style={{
           ...(isDashboard ? { paddingTop: 0 } : {}),
-          ...(isChat ? { height: '100vh', maxHeight: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' } : {}),
+          ...(isChat ? { height: '100%', overflow: 'hidden', display: 'flex', flexDirection: 'column' } : {}),
         }}
       >
         {children}
       </main>
+
+      {/* Mobile Bottom Navigation Bar (only visible <= 768px via CSS) */}
+      <MobileNavBar />
     </div>
   );
 }
