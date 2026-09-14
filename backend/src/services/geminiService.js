@@ -145,35 +145,35 @@ ${text.substring(0, 8000)}`; // Limit context length
 const chatWithAI = async (history, userMsg, context = {}) => {
   const model = getClient().getGenerativeModel({ model: 'gemini-3.6-flash' });
 
-  const systemContext = `You are NutriBot, an expert AI nutrition coach and assistant embedded in a personal calorie tracker app.
+  const systemContext = `You are NutriBot, an intelligent, full-capability AI nutrition coach embedded in a personal calorie tracker app.
 
 Today's date: ${new Date().toISOString().split('T')[0]}
 User's active goal: ${context.activeGoal ? JSON.stringify(context.activeGoal) : 'Not set'}
-Today's food entries: ${context.todayEntries?.length ? JSON.stringify(context.todayEntries) : 'None logged yet'}
+Today's logged entries: ${context.todayEntries?.length ? JSON.stringify(context.todayEntries) : 'None logged yet'}
 
-You help users:
-1. Log meals — when a user wants to log food, emit a machine-readable action block on its OWN line at the very END of your reply, after all human-readable text:
-   ACTION:LOG_ENTRY:{"date":"YYYY-MM-DD","mealType":"breakfast","foodName":"...","quantity":100,"unit":"g","calories":200,"protein":10,"carbs":25,"fat":5}
-2. Answer nutrition and macro questions with accurate dietary facts
-3. Provide meal breakdowns, remaining daily calories, and macro balance
-4. Offer motivating, evidence-based fitness and diet guidance
+YOU HAVE DIRECT ACCESS TO PERFORM ACTIONS IN THE APP VIA ACTION BLOCKS:
+1. LOGGING MEALS (CRITICAL):
+   Whenever the user asks to log, add, or eat food (e.g. "add protein bar to snacks", "logged 2 boiled eggs for breakfast", "ate a bowl of oatmeal with peanut butter"), you MUST emit a machine-readable ACTION:LOG_ENTRY block on its OWN line at the very END of your message:
+   ACTION:LOG_ENTRY:{"date":"YYYY-MM-DD","mealType":"breakfast|lunch|dinner|snacks","foodName":"...","quantity":1,"unit":"piece|g|serving|cup|bar|slice","calories":200,"protein":20,"carbs":25,"fat":5}
 
-FORMATTING GUIDELINES (CRITICAL):
-- Format responses cleanly and professionally.
-- Use clean bullet points: "• **Meal/Item:** description"
-- Use bold section headers with an emoji: e.g. "📊 **Today's Totals & Progress:**" instead of raw markdown hashtags like "###".
-- Present nutrition numbers cleanly (e.g. "• **Calories:** 150 / 2,000 kcal *(1,850 kcal remaining)*").
-- Keep responses well-spaced, visually appealing, and scannable.
+   CRITICAL RULES FOR mealType:
+   - Must be EXACTLY ONE OF: "breakfast", "lunch", "dinner", "snacks" (always lowercase, always "snacks" with an 's'!).
+   - If the user specifies "snack" or "snacks", use "snacks".
+   - Estimate realistic calories, protein (g), carbs (g), and fat (g) if the user did not specify exact numbers.
 
-CRITICAL RULES:
-- NEVER show ACTION:LOG_ENTRY lines in the human-readable part of your reply.
-- NEVER mention the words ACTION, LOG_ENTRY, or JSON to the user.
-- The ACTION lines are invisible machine instructions — the user will never see them.
-- Your visible reply must ONLY contain natural, friendly, conversational text.
-- After logging, confirm in plain language: what was logged, estimated calories/macros, and remaining daily calories if the goal is set.
-- Clearly mark estimated values with ~ or "approximately".
-- Never fabricate data. Never claim an action succeeded without emitting an ACTION block.
-- If meal type or quantity is genuinely unclear, ask for clarification.`;
+2. SETTING OR UPDATING HEALTH GOALS:
+   When the user asks to set or change their target calories or macros (e.g. "set my daily goal to 2200 kcal with 150g protein"):
+   ACTION:SET_GOAL:{"dailyCalories":2200,"proteinG":150,"carbsG":200,"fatG":60}
+
+3. DELETING MEALS:
+   When the user asks to delete or remove an entry from today (e.g. "remove the protein bar", "delete lunch"):
+   ACTION:DELETE_ENTRY:{"id":"entry_id_if_known","foodName":"Protein Bar","mealType":"snacks"}
+
+FORMATTING GUIDELINES:
+- Format your visible reply cleanly with emojis, bullet points, and bold text.
+- NEVER show the ACTION: lines or raw JSON in your visible explanation. They are machine instructions that the server parses and strips out.
+- In your visible reply, confirm naturally and warmly: what was logged, the estimated calories and macros, and how many calories remain today if the user has an active goal.
+- Be encouraging, accurate, and concise.`;
 
   // Build chat history for Gemini
   const chatHistory = history.map((msg) => ({
@@ -184,7 +184,7 @@ CRITICAL RULES:
   const chat = model.startChat({
     history: [
       { role: 'user', parts: [{ text: systemContext }] },
-      { role: 'model', parts: [{ text: 'Understood! I\'m NutriBot and ready to help you track nutrition.' }] },
+      { role: 'model', parts: [{ text: 'Understood! I am NutriBot and ready to assist you with meal logging, goals, and nutrition tracking.' }] },
       ...chatHistory,
     ],
   });
@@ -194,18 +194,23 @@ CRITICAL RULES:
 
   // Extract ACTION blocks BEFORE stripping them from the visible text
   const actions = [];
-  const actionRegex = /ACTION:([A-Z_]+):(\{.*?\})/gs;
+  // Matches ACTION:TYPE:{...} with flexible whitespace and multiline support
+  const actionRegex = /ACTION:\s*([A-Z_]+)\s*:\s*(\{[\s\S]*?\})/g;
   let match;
   while ((match = actionRegex.exec(raw)) !== null) {
     try {
-      actions.push({ type: match[1], payload: JSON.parse(match[2]) });
+      const parsed = JSON.parse(match[2]);
+      actions.push({ type: match[1].trim(), payload: parsed });
     } catch (_) { /* ignore malformed action */ }
   }
 
   // Strip ACTION lines so the user never sees them
   const response = raw
     .split('\n')
-    .filter((line) => !line.trim().startsWith('ACTION:'))
+    .filter((line) => {
+      const trimmed = line.trim();
+      return !trimmed.startsWith('ACTION:') && !trimmed.startsWith('```ACTION:');
+    })
     .join('\n')
     .trim();
 

@@ -378,32 +378,114 @@ const chat = async (req, res, next) => {
       { todayEntries, activeGoal }
     );
 
-    // Auto-execute LOG_ENTRY actions
+    // Helper to normalize mealType strictly to prisma enum
+    const normalizeMealType = (raw) => {
+      if (!raw) return 'snacks';
+      const m = String(raw).toLowerCase().trim();
+      if (m === 'snack' || m === 'snacks') return 'snacks';
+      if (m === 'breakfast') return 'breakfast';
+      if (m === 'lunch') return 'lunch';
+      if (m === 'dinner') return 'dinner';
+      return 'snacks';
+    };
+
+    // Auto-execute actions emitted by the AI
     const executedEntries = [];
-    let entriesLogged = false;
+    let stateChanged = false;
 
     for (const action of actions) {
       if (action.type === 'LOG_ENTRY') {
         try {
-          const entry = await prisma.foodEntry.create({
-            data: { ...action.payload, userId, source: 'ai' },
-          });
+          const p = action.payload || {};
+          const cleanData = {
+            userId,
+            source: 'ai',
+            date: p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : todayString(),
+            mealType: normalizeMealType(p.mealType),
+            foodName: String(p.foodName || 'Food Item').trim(),
+            quantity: parseFloat(p.quantity) > 0 ? parseFloat(p.quantity) : 1,
+            unit: p.unit ? String(p.unit).trim() : 'serving',
+            calories: Math.max(0, parseFloat(p.calories) || 0),
+            protein: Math.max(0, parseFloat(p.protein) || 0),
+            carbs: Math.max(0, parseFloat(p.carbs) || 0),
+            fat: Math.max(0, parseFloat(p.fat) || 0),
+            fiber: Math.max(0, parseFloat(p.fiber) || 0),
+            sugar: Math.max(0, parseFloat(p.sugar) || 0),
+            sodium: Math.max(0, parseFloat(p.sodium) || 0),
+            potassium: Math.max(0, parseFloat(p.potassium) || 0),
+            vitaminC: Math.max(0, parseFloat(p.vitaminC) || 0),
+            vitaminD: Math.max(0, parseFloat(p.vitaminD) || 0),
+            calcium: Math.max(0, parseFloat(p.calcium) || 0),
+            iron: Math.max(0, parseFloat(p.iron) || 0),
+            notes: p.notes ? String(p.notes).trim() : null,
+          };
+
+          const entry = await prisma.foodEntry.create({ data: cleanData });
           executedEntries.push(entry);
-          entriesLogged = true;
-        } catch (_) { /* non-blocking */ }
+          stateChanged = true;
+          console.log(`✅ [Chat AI] Automatically logged entry: "${entry.foodName}" in ${entry.mealType} (${entry.calories} kcal) for user ${userId}`);
+        } catch (err) {
+          console.error('❌ [Chat AI] Failed to log entry from action:', err.message);
+        }
+      } else if (action.type === 'SET_GOAL') {
+        try {
+          const p = action.payload || {};
+          if (p.dailyCalories && Number(p.dailyCalories) > 0) {
+            const goalData = {
+              userId,
+              dailyCalories: parseFloat(p.dailyCalories),
+              proteinG: Math.max(0, parseFloat(p.proteinG) || 0),
+              carbsG: Math.max(0, parseFloat(p.carbsG) || 0),
+              fatG: Math.max(0, parseFloat(p.fatG) || 0),
+              weightGoalKg: p.weightGoalKg ? parseFloat(p.weightGoalKg) : null,
+              notes: p.notes ? String(p.notes).trim() : 'Updated via AI Chat',
+            };
+            const updatedGoal = await prisma.goal.create({ data: goalData });
+            stateChanged = true;
+            console.log(`🎯 [Chat AI] Automatically updated goal: ${updatedGoal.dailyCalories} kcal for user ${userId}`);
+          }
+        } catch (err) {
+          console.error('❌ [Chat AI] Failed to set goal from action:', err.message);
+        }
+      } else if (action.type === 'DELETE_ENTRY') {
+        try {
+          const p = action.payload || {};
+          const whereClause = { userId };
+          if (p.id) {
+            whereClause.id = p.id;
+          } else if (p.foodName) {
+            whereClause.foodName = { contains: p.foodName.trim(), mode: 'insensitive' };
+            whereClause.date = todayString();
+          }
+          const target = await prisma.foodEntry.findFirst({
+            where: whereClause,
+            orderBy: { createdAt: 'desc' },
+          });
+          if (target) {
+            await prisma.foodEntry.delete({ where: { id: target.id } });
+            stateChanged = true;
+            console.log(`🗑️ [Chat AI] Automatically deleted food entry: "${target.foodName}" for user ${userId}`);
+          }
+        } catch (err) {
+          console.error('❌ [Chat AI] Failed to delete entry from action:', err.message);
+        }
       }
     }
 
-    // If entries were logged via chat, invalidate user cache
-    if (entriesLogged) {
+    // Invalidate Redis user cache so Dashboard and Entries reflect immediately
+    if (stateChanged) {
       await invalidateUserCache(userId);
     }
 
-    // Persist user message and AI response
+    // Persist user message and AI response with staggered timestamps
+    // so user prompt is strictly timestamped before the assistant response
+    const userCreatedAt = new Date();
+    const assistantCreatedAt = new Date(userCreatedAt.getTime() + 100);
+
     await prisma.chatMessage.createMany({
       data: [
-        { userId, role: 'user', content: message },
-        { userId, role: 'assistant', content: aiResponse, actions },
+        { userId, role: 'user', content: message, createdAt: userCreatedAt },
+        { userId, role: 'assistant', content: aiResponse, actions, createdAt: assistantCreatedAt },
       ],
     });
 
@@ -429,7 +511,15 @@ const getChatHistory = async (req, res, next) => {
       take: limit,
     });
     // Return in chronological order (oldest to newest)
-    messages.reverse();
+    // For legacy messages created with identical timestamps, ensure 'user' precedes 'assistant'
+    messages.sort((a, b) => {
+      const timeDiff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      if (a.role === 'user' && b.role === 'assistant') return -1;
+      if (a.role === 'assistant' && b.role === 'user') return 1;
+      return 0;
+    });
+
     res.json({ success: true, data: messages });
   } catch (error) {
     next(error);

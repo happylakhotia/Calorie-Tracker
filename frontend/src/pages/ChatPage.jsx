@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Trash2, Bot, User, Loader2, Sparkles, Mic, MicOff } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Send, Trash2, Bot, User, Loader2, Sparkles, Mic, MicOff, CheckCircle2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { aiApi } from '../api';
 import { getApiError } from '../utils/helpers';
@@ -148,6 +149,18 @@ function renderFormattedMessage(text) {
   return html;
 }
 
+const sortMessagesChronologically = (list) => {
+  if (!Array.isArray(list)) return [];
+  return [...list].sort((a, b) => {
+    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    if (timeA && timeB && timeA !== timeB) return timeA - timeB;
+    if (a.role === 'user' && b.role === 'assistant') return -1;
+    if (a.role === 'assistant' && b.role === 'user') return 1;
+    return 0;
+  });
+};
+
 export default function ChatPage() {
   // Initialize state immediately from cache if available to prevent flash on reload
   const [messages, setMessages] = useState(() => {
@@ -155,7 +168,9 @@ export default function ChatPage() {
       const saved = localStorage.getItem(CHAT_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return sortMessagesChronologically(parsed);
+        }
       }
     } catch (_) { }
     return [{ role: 'assistant', content: WELCOME_MESSAGE }];
@@ -182,12 +197,15 @@ export default function ChatPage() {
     aiApi.getChatHistory()
       .then(({ data }) => {
         if (data.data && data.data.length > 0) {
-          const loaded = data.data.map((m) => ({
-            role: m.role,
-            content: m.content,
-            id: m.id,
-            actions: m.actions,
-          }));
+          const loaded = sortMessagesChronologically(
+            data.data.map((m) => ({
+              role: m.role,
+              content: m.content,
+              id: m.id,
+              actions: m.actions,
+              createdAt: m.createdAt,
+            }))
+          );
           setMessages(loaded);
           try {
             localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(loaded));
@@ -211,7 +229,8 @@ export default function ChatPage() {
     }
     setIsListening(false);
 
-    const userMsg = { role: 'user', content: text };
+    const now = new Date();
+    const userMsg = { role: 'user', content: text, createdAt: now.toISOString() };
     const updatedWithUser = [...messages, userMsg];
     setMessages(updatedWithUser);
     try {
@@ -228,6 +247,7 @@ export default function ChatPage() {
         content: data.data.response,
         actions: data.data.actions,
         executedEntries: data.data.executedEntries,
+        createdAt: new Date(now.getTime() + 100).toISOString(),
       };
       const finalMessages = [...updatedWithUser, aiMsg];
       setMessages(finalMessages);
@@ -240,7 +260,11 @@ export default function ChatPage() {
       }
     } catch (err) {
       const msg = getApiError(err);
-      const errorMsg = { role: 'assistant', content: `❌ Sorry, I encountered an error: ${msg}` };
+      const errorMsg = {
+        role: 'assistant',
+        content: `❌ Sorry, I encountered an error: ${msg}`,
+        createdAt: new Date(now.getTime() + 100).toISOString(),
+      };
       const finalMessages = [...updatedWithUser, errorMsg];
       setMessages(finalMessages);
       try {
@@ -506,10 +530,58 @@ export default function ChatPage() {
                         {msg.content}
                       </div>
                     ) : (
-                      <div
-                        dangerouslySetInnerHTML={{ __html: renderFormattedMessage(msg.content) }}
-                        style={{ wordBreak: 'break-word' }}
-                      />
+                      <>
+                        <div
+                          dangerouslySetInnerHTML={{ __html: renderFormattedMessage(msg.content) }}
+                          style={{ wordBreak: 'break-word' }}
+                        />
+                        {msg.executedEntries && msg.executedEntries.length > 0 && (
+                          <div style={{
+                            marginTop: 14,
+                            padding: '12px 16px',
+                            background: 'oklch(0.88 0.08 165 / 0.18)',
+                            border: '1.5px solid oklch(0.48 0.098 155 / 0.35)',
+                            borderRadius: 14,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 8,
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+                              <span style={{ fontSize: 13, fontWeight: 800, color: T.primaryDark, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <CheckCircle2 size={16} color={T.primary} />
+                                Automatically Logged to Database
+                              </span>
+                              <Link
+                                to="/dashboard"
+                                style={{ fontSize: 12, fontWeight: 700, color: T.primary, textDecoration: 'none' }}
+                              >
+                                View on Dashboard &rarr;
+                              </Link>
+                            </div>
+                            {msg.executedEntries.map((e, idx) => (
+                              <div key={idx} style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                background: '#FFFFFF',
+                                padding: '9px 14px',
+                                borderRadius: 10,
+                                border: `1px solid ${T.borderLight}`,
+                                fontSize: 13,
+                                flexWrap: 'wrap',
+                                gap: 6,
+                              }}>
+                                <div style={{ fontWeight: 700, color: T.text }}>
+                                  {e.foodName} <span style={{ fontWeight: 500, color: T.muted, fontSize: 12 }}>({e.quantity} {e.unit} · {e.mealType})</span>
+                                </div>
+                                <div style={{ fontSize: 12.5, fontWeight: 600, color: T.secondary }}>
+                                  🔥 {e.calories} kcal · P: {e.protein}g · C: {e.carbs}g · F: {e.fat}g
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

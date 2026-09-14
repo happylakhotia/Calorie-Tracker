@@ -26,34 +26,85 @@ const EMPTY = {
   notes: '',
 };
 
-export default function FoodEntryModal({ isOpen, onClose, onSaved, entry = null, defaults = {} }) {
+export default function FoodEntryModal({ isOpen, onClose, onSaved, entry = null, defaults = {}, defaultValues = {} }) {
   const [form, setForm] = useState(EMPTY);
   const [loading, setLoading] = useState(false);
   const [showMicros, setShowMicros] = useState(false);
 
-  const isEditing = Boolean(entry);
+  // Only consider editing if entry has a valid id from database
+  const isEditing = Boolean(entry && entry.id);
 
   useEffect(() => {
     if (isOpen) {
-      setForm(entry
-        ? { ...EMPTY, ...entry }
-        : { ...EMPTY, date: today(), ...defaults });
-      setShowMicros(false);
+      if (entry && entry.id) {
+        setForm({
+          ...EMPTY,
+          ...entry,
+          quantity: entry.quantity ?? '',
+          calories: entry.calories ?? '',
+          protein: entry.protein ?? '',
+          carbs: entry.carbs ?? '',
+          fat: entry.fat ?? '',
+          fiber: entry.fiber ?? '',
+          sugar: entry.sugar ?? '',
+          sodium: entry.sodium ?? '',
+          potassium: entry.potassium ?? '',
+          vitaminC: entry.vitaminC ?? '',
+          vitaminD: entry.vitaminD ?? '',
+          calcium: entry.calcium ?? '',
+          iron: entry.iron ?? '',
+          notes: entry.notes || '',
+        });
+        setShowMicros(Boolean(
+          entry.fiber || entry.sugar || entry.sodium || entry.potassium ||
+          entry.vitaminC || entry.vitaminD || entry.calcium || entry.iron
+        ));
+      } else {
+        const merged = { ...defaults, ...defaultValues };
+        setForm({
+          ...EMPTY,
+          date: merged.date || today(),
+          mealType: merged.mealType || 'breakfast',
+          foodName: merged.foodName || '',
+          quantity: merged.quantity ?? '',
+          unit: merged.unit || 'g',
+          calories: merged.calories ?? '',
+          protein: merged.protein ?? '',
+          carbs: merged.carbs ?? '',
+          fat: merged.fat ?? '',
+          fiber: merged.fiber ?? '',
+          sugar: merged.sugar ?? '',
+          sodium: merged.sodium ?? '',
+          potassium: merged.potassium ?? '',
+          vitaminC: merged.vitaminC ?? '',
+          vitaminD: merged.vitaminD ?? '',
+          calcium: merged.calcium ?? '',
+          iron: merged.iron ?? '',
+          notes: merged.notes || '',
+        });
+        setShowMicros(Boolean(
+          merged.fiber || merged.sugar || merged.sodium || merged.potassium ||
+          merged.vitaminC || merged.vitaminD || merged.calcium || merged.iron
+        ));
+      }
     }
-  }, [isOpen, entry, defaults]);
+  }, [isOpen]);
 
-  const set = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
-
+  const set = (field) => (e) => {
+    const val = e.target.value;
+    setForm((f) => ({ ...f, [field]: val }));
+  };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!form.foodName.trim()) return toast.error('Food name is required.');
-    if (!form.quantity || form.quantity <= 0) return toast.error('Quantity must be positive.');
+    if (e && e.preventDefault) e.preventDefault();
+    if (!form.foodName || !form.foodName.trim()) return toast.error('Food name is required.');
+    if (!form.quantity || Number(form.quantity) <= 0) return toast.error('Quantity must be positive.');
 
     setLoading(true);
     try {
       const payload = {
         ...form,
+        foodName: form.foodName.trim(),
         quantity: parseFloat(form.quantity) || 0,
         calories: parseFloat(form.calories) || 0,
         protein: parseFloat(form.protein) || 0,
@@ -67,6 +118,7 @@ export default function FoodEntryModal({ isOpen, onClose, onSaved, entry = null,
         vitaminD: parseFloat(form.vitaminD) || 0,
         calcium: parseFloat(form.calcium) || 0,
         iron: parseFloat(form.iron) || 0,
+        notes: form.notes ? form.notes.trim() : '',
       };
 
       if (isEditing) {
@@ -89,7 +141,7 @@ export default function FoodEntryModal({ isOpen, onClose, onSaved, entry = null,
     id: `input-entry-${field}`,
     type,
     className: 'form-control',
-    value: form[field],
+    value: form[field] ?? '',
     onChange: set(field),
     min: type === 'number' ? '0' : undefined,
     step: type === 'number' ? 'any' : undefined,
@@ -104,13 +156,21 @@ export default function FoodEntryModal({ isOpen, onClose, onSaved, entry = null,
       footer={
         <>
           <button className="btn btn-secondary" onClick={onClose} type="button">Cancel</button>
-          <button className="btn btn-primary" onClick={handleSubmit} disabled={loading} id="btn-save-entry">
+          <button
+            className="btn btn-primary"
+            onClick={handleSubmit}
+            disabled={loading}
+            id="btn-save-entry"
+            type="submit"
+            form="food-entry-modal-form"
+          >
             {loading ? <span className="spinner" /> : null}
             {isEditing ? 'Save Changes' : 'Log Entry'}
           </button>
         </>
       }
     >
+      <form id="food-entry-modal-form" onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
       {/* Core fields */}
       <div className="form-row">
         <div className="form-group">
@@ -206,6 +266,7 @@ export default function FoodEntryModal({ isOpen, onClose, onSaved, entry = null,
           onChange={set('notes')}
         />
       </div>
+      </form>
     </Modal>
   );
 }
