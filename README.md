@@ -4,6 +4,12 @@ NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking
 
 ---
 
+## Demo Video
+
+https://drive.google.com/file/d/1cjhT3yF-0Vf04K14HaOGRtKA7z0UEFRk/view?usp=sharing
+
+---
+
 ## 📑 Table of Contents
 - [Features Implemented](#-features)
   - [Core Tracking & Health Goals](#core-tracking--health-goals)
