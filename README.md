@@ -2,11 +2,6 @@
 
 NutriTrack is an intelligent, full-stack personal nutrition and calorie tracking platform. Powered by **Google Gemini AI**, backed by **Supabase PostgreSQL (via Prisma ORM)**, orchestrated with **BullMQ** for non-blocking asynchronous background processing, accelerated with **Redis caching & job queues**, enhanced with **hands-free voice-to-text input**, and integrated with **Cloudinary** for media management with **SHA-256 file content deduplication**.
 
----
-
-## Demo Video
-
-https://drive.google.com/file/d/1cjhT3yF-0Vf04K14HaOGRtKA7z0UEFRk/view?usp=sharing
 
 ---
 
