@@ -1,11 +1,16 @@
 const { Queue } = require('bullmq');
-const { createQueueConnection } = require('../config/queue');
-
-const connection = createQueueConnection();
 
 let fileQueue = null;
 
-if (connection) {
+/**
+ * Initialize the BullMQ file queue using an already-verified Redis connection.
+ * Must be called after initQueueConnection() resolves.
+ *
+ * @param {import('ioredis').Redis} connection - pre-tested ioredis connection
+ */
+const initFileQueue = (connection) => {
+  if (!connection) return;
+
   fileQueue = new Queue('file-processing', {
     connection,
     defaultJobOptions: {
@@ -20,9 +25,9 @@ if (connection) {
   });
 
   fileQueue.on('error', (err) => {
-    console.warn('⚠️ BullMQ File Queue Error:', err.message);
+    console.warn('[BullMQ] File Queue Error:', err.message);
   });
-}
+};
 
 /**
  * Enqueue a file for background Gemini AI processing.
@@ -39,7 +44,8 @@ if (connection) {
  */
 const addFileJob = async (payload) => {
   if (!fileQueue) {
-    throw new Error('BullMQ file queue is not initialized. Check Redis connection.');
+    console.warn('[BullMQ] Queue unavailable (Redis not connected). File job skipped for:', payload.fileUploadId);
+    return null;
   }
 
   const jobName = `process-${payload.fileType}-${payload.fileUploadId}`;
@@ -47,11 +53,12 @@ const addFileJob = async (payload) => {
     jobId: payload.fileUploadId, // Use upload ID as unique job ID
   });
 
-  console.log(`📥 [BullMQ] Queued job ${job.id} for file ${payload.originalName || payload.fileUploadId} (${payload.fileType})`);
+  console.log(`[BullMQ] Queued job ${job.id} for file ${payload.originalName || payload.fileUploadId} (${payload.fileType})`);
   return job;
 };
 
 module.exports = {
-  fileQueue,
+  initFileQueue,
   addFileJob,
+  getFileQueue: () => fileQueue,
 };

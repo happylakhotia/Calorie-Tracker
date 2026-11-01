@@ -1,6 +1,8 @@
 const pdfParse = require('pdf-parse');
 const prisma = require('../lib/prisma');
-const { analyzeImage, parsePdfEntries, chatWithAI } = require('../services/geminiService');
+const { analyzeImage, parsePdfEntries, chatWithAI, sendToolResults } = require('../services/geminiService');
+const { dispatchTool } = require('../tools/mealTools');
+
 const { uploadToCloudinary } = require('../services/cloudinaryService');
 const {
   getCache,
@@ -38,14 +40,14 @@ const analyzeFood = async (req, res, next) => {
     const mimetype = req.file.mimetype;
     const originalName = req.file.originalname || 'uploaded-food.jpg';
 
-    // 1. Calculate SHA-256 hash of the actual file contents
+    // Calculate SHA-256 hash of the actual file contents
     const fileHash = calculateFileHash(fileBuffer);
     const cacheKey = `gemini:file:${userId}:${fileHash}`;
 
-    // 2. Check Redis cache (Cache-Aside pattern)
+    // Check Redis cache (Cache-Aside pattern)
     const cachedResult = await getCache(cacheKey);
     if (cachedResult) {
-      console.log(`⚡ [Cache HIT] Returning cached Gemini analysis for user ${userId} (hash: ${fileHash.slice(0, 10)}...)`);
+      console.log(`[Cache HIT] Returning cached Gemini analysis for user ${userId} (hash: ${fileHash.slice(0, 10)}...)`);
       return res.json({
         success: true,
         status: 'completed',
@@ -56,7 +58,7 @@ const analyzeFood = async (req, res, next) => {
       });
     }
 
-    // 3. Check Supabase database for duplicate (userId, fileHash)
+    // Check Supabase database for duplicate (userId, fileHash)
     const existingUpload = await prisma.fileUpload.findUnique({
       where: {
         userId_fileHash: {
@@ -68,7 +70,7 @@ const analyzeFood = async (req, res, next) => {
 
     if (existingUpload) {
       if (existingUpload.processingStatus === 'completed' && existingUpload.geminiResult) {
-        console.log(`💾 [DB HIT - Duplicate Detected] Reusing existing Gemini result for user ${userId} without calling Gemini API`);
+        console.log(`[DB HIT - Duplicate Detected] Reusing existing Gemini result for user ${userId} without calling Gemini API`);
         await setCache(cacheKey, existingUpload.geminiResult, TTL.FILE_ANALYSIS);
 
         return res.json({
@@ -84,22 +86,21 @@ const analyzeFood = async (req, res, next) => {
       }
     }
 
-    // 4. Upload to Cloudinary in background (non-blocking, fire-and-forget for speed)
+    //  Upload to Cloudinary in background (non-blocking, fire-and-forget for speed)
     let cloudinaryUrl = null;
     uploadToCloudinary(fileBuffer, {
       folder: `calorie-tracker/${userId}/images`,
       resource_type: 'image',
     })
       .then((r) => { cloudinaryUrl = r.secure_url; })
-      .catch((err) => { console.warn('⚠️ Cloudinary upload warning (non-fatal):', err.message); });
+      .catch((err) => { console.warn('Cloudinary upload warning (non-fatal):', err.message); });
 
-    // 5. Call Gemini directly in-memory — no BullMQ, no polling, synchronous response
-    console.log(`🤖 [analyzeFood] Calling Gemini directly for user ${userId} (${mimetype})...`);
+    console.log(`[analyzeFood] Calling Gemini for user ${userId} (${mimetype})...`);
     const nutritionData = await analyzeImage(fileBuffer, mimetype);
 
-    console.log(`✅ [analyzeFood] Analysis complete: ${nutritionData.foodName || 'Food Item'}`);
+    console.log(`[analyzeFood] Analysis complete: ${nutritionData.foodName || 'Food Item'}`);
 
-    // 6. Store result in DB for future deduplication (non-blocking, non-fatal)
+    // Store result in DB for future deduplication (non-blocking, non-fatal)
     prisma.fileUpload.upsert({
       where: { userId_fileHash: { userId, fileHash } },
       create: {
@@ -117,9 +118,9 @@ const analyzeFood = async (req, res, next) => {
         geminiResult: nutritionData,
         errorMessage: null,
       },
-    }).catch((err) => console.warn('⚠️ [analyzeFood] DB upsert warning (non-fatal):', err.message));
+    }).catch((err) => console.warn('[analyzeFood] DB upsert warning (non-fatal):', err.message));
 
-    // 7. Cache in Redis for instant reuse on repeated uploads
+    //  Cache in Redis for instant reuse on repeated uploads
     await setCache(cacheKey, nutritionData, TTL.FILE_ANALYSIS);
 
     return res.status(200).json({
@@ -131,12 +132,12 @@ const analyzeFood = async (req, res, next) => {
       duplicate: false,
     });
   } catch (error) {
-    console.error('❌ [analyzeFood Error]:', error);
+    console.error('[analyzeFood Error]:', error);
     next(error);
   }
 };
 
-// ── Normalization helpers for PDF & Action meal entries ───────────────────────
+// Normalization helpers for PDF & Action meal entries
 const normalizeMealType = (raw) => {
   if (!raw) return 'breakfast';
   const m = String(raw).toLowerCase().trim();
@@ -197,14 +198,14 @@ const importPdf = async (req, res, next) => {
     const fileBuffer = req.file.buffer;
     const originalName = req.file.originalname || 'food-diary.pdf';
 
-    // 1. Calculate SHA-256 hash of the actual PDF file contents
+    // Calculate SHA-256 hash of the actual PDF file contents
     const fileHash = calculateFileHash(fileBuffer);
     const cacheKey = `gemini:file:${userId}:${fileHash}`;
 
-    // 2. Check Redis cache
+    //  Check Redis cache
     const cachedData = await getCache(cacheKey);
     if (cachedData && Array.isArray(cachedData)) {
-      console.log(`⚡ [Redis Cache HIT] Reusing parsed PDF entries for user ${userId}`);
+      console.log(`[Redis Cache HIT] Reusing parsed PDF entries for user ${userId}`);
 
       const entriesToInsert = cachedData
         .map((e) => sanitizePdfEntry(e, userId))
@@ -231,7 +232,7 @@ const importPdf = async (req, res, next) => {
       });
     }
 
-    // 3. Check Supabase DB for duplicate
+    // Check Supabase DB for duplicate
     const existingUpload = await prisma.fileUpload.findUnique({
       where: {
         userId_fileHash: { userId, fileHash },
@@ -239,7 +240,7 @@ const importPdf = async (req, res, next) => {
     });
 
     if (existingUpload && existingUpload.processingStatus === 'completed' && Array.isArray(existingUpload.geminiResult)) {
-      console.log(`💾 [DB HIT - Duplicate PDF] Reusing stored Gemini result for user ${userId}`);
+      console.log(`[DB HIT - Duplicate PDF] Reusing stored Gemini result for user ${userId}`);
 
       await setCache(cacheKey, existingUpload.geminiResult, TTL.FILE_ANALYSIS);
 
@@ -269,31 +270,31 @@ const importPdf = async (req, res, next) => {
       });
     }
 
-    // 4. Parse PDF in-memory immediately using pdf-parse
-    console.log(`📄 [PDF Parser] Extracting text from PDF buffer for user ${userId}...`);
+    // Parse PDF in-memory immediately using pdf-parse
+    console.log(`[PDF Parser] Extracting text from PDF buffer for user ${userId}...`);
     let pdfText = '';
     try {
       const pdfData = await pdfParse(fileBuffer);
       pdfText = pdfData.text || '';
     } catch (parseErr) {
-      console.warn('⚠️ [pdf-parse] Error extracting text:', parseErr.message);
+      console.warn(' [pdf-parse] Error extracting text:', parseErr.message);
     }
 
     if (!pdfText || pdfText.trim().length < 10) {
       return next(createError('Could not extract readable text from the uploaded PDF. Please make sure the PDF contains readable text or food logs.', 400));
     }
 
-    // 5. Upload to Cloudinary in background (non-blocking for performance)
+    //  Upload to Cloudinary in background (non-blocking for performance)
     let cloudinaryUrl = null;
     uploadToCloudinary(fileBuffer, {
       folder: `calorie-tracker/${userId}/documents`,
       resource_type: 'auto',
     })
       .then((res) => { cloudinaryUrl = res.secure_url; })
-      .catch((err) => { console.warn('⚠️ Cloudinary upload warning (non-fatal):', err.message); });
+      .catch((err) => { console.warn(' Cloudinary upload warning (non-fatal):', err.message); });
 
-    // 6. Call Gemini to parse nutrition entries
-    console.log(`🤖 [PDF Parser] Calling Gemini to parse entries from text (${pdfText.length} chars)...`);
+    // Call Gemini to parse nutrition entries
+    console.log(` [PDF Parser] Calling Gemini to parse entries from text (${pdfText.length} chars)...`);
     const rawEntries = await parsePdfEntries(pdfText);
 
     const cleanEntries = (Array.isArray(rawEntries) ? rawEntries : [])
@@ -307,13 +308,13 @@ const importPdf = async (req, res, next) => {
         skipDuplicates: true,
       });
       importedCount = insertResult.count;
-      console.log(`✅ [PDF Parser] Inserted ${importedCount} entries into database for user ${userId}`);
+      console.log(`[PDF Parser] Inserted ${importedCount} entries into database for user ${userId}`);
 
       // Invalidate user cache so dashboard & reports update immediately
       await invalidateUserCache(userId);
     }
 
-    // 7. Store result in DB and Redis cache
+    // Store result in DB and Redis cache
     await prisma.fileUpload.upsert({
       where: { userId_fileHash: { userId, fileHash } },
       create: {
@@ -345,7 +346,7 @@ const importPdf = async (req, res, next) => {
       duplicate: false,
     });
   } catch (error) {
-    console.error('❌ [PDF Import Error]:', error);
+    console.error('[PDF Import Error]:', error);
     next(error);
   }
 };
@@ -384,7 +385,10 @@ const getUploadStatus = async (req, res, next) => {
 
 /**
  * POST /api/ai/chat
- * Conversational AI endpoint. Stores chat history in the database.
+ * Conversational AI endpoint using Gemini Function Calling.
+ *
+ * Flow: user → Gemini (tool call) → mealTools (validate + DB) → Gemini (final reply) → user
+ * Gemini NEVER sees raw database records. It only receives tool result summaries.
  */
 const chat = async (req, res, next) => {
   try {
@@ -398,110 +402,63 @@ const chat = async (req, res, next) => {
       take: 20,
     });
 
-    // Get today's entries and active goal for grounding the AI
-    const [todayEntries, activeGoal] = await Promise.all([
-      prisma.foodEntry.findMany({ where: { userId, date: todayString() } }),
-      prisma.goal.findFirst({ where: { userId }, orderBy: { createdAt: 'desc' } }),
-    ]);
+    // Provide ONLY a minimal goal summary to Gemini — never raw DB entries
+    const activeGoal = await prisma.goal.findFirst({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      select: { dailyCalories: true, proteinG: true, carbsG: true, fatG: true },
+    });
 
-    // Get AI response (service returns clean text + pre-parsed actions)
-    const { response: aiResponse, actions } = await chatWithAI(
+    const goalSummary = activeGoal
+      ? `${activeGoal.dailyCalories} kcal/day | ${activeGoal.proteinG}g protein | ${activeGoal.carbsG}g carbs | ${activeGoal.fatG}g fat`
+      : 'Not set';
+
+    // Step 1: Send user message to Gemini — it will either reply directly or emit tool calls
+    const { response: initialResponse, toolCalls } = await chatWithAI(
       history.map((m) => ({ role: m.role, content: m.content })),
       message,
-      { todayEntries, activeGoal }
+      { goalSummary }
     );
 
-    // Helper to normalize mealType strictly to prisma enum
-    const normalizeMealType = (raw) => {
-      if (!raw) return 'snacks';
-      const m = String(raw).toLowerCase().trim();
-      if (m === 'snack' || m === 'snacks') return 'snacks';
-      if (m === 'breakfast') return 'breakfast';
-      if (m === 'lunch') return 'lunch';
-      if (m === 'dinner') return 'dinner';
-      return 'snacks';
-    };
-
-    // Auto-execute actions emitted by the AI
-    const executedEntries = [];
+    let finalResponse = initialResponse;
+    const executedResults = [];
     let stateChanged = false;
 
-    for (const action of actions) {
-      if (action.type === 'LOG_ENTRY') {
-        try {
-          const p = action.payload || {};
-          const cleanData = {
-            userId,
-            source: 'ai',
-            date: p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : todayString(),
-            mealType: normalizeMealType(p.mealType),
-            foodName: String(p.foodName || 'Food Item').trim(),
-            quantity: parseFloat(p.quantity) > 0 ? parseFloat(p.quantity) : 1,
-            unit: p.unit ? String(p.unit).trim() : 'serving',
-            calories: Math.max(0, parseFloat(p.calories) || 0),
-            protein: Math.max(0, parseFloat(p.protein) || 0),
-            carbs: Math.max(0, parseFloat(p.carbs) || 0),
-            fat: Math.max(0, parseFloat(p.fat) || 0),
-            fiber: Math.max(0, parseFloat(p.fiber) || 0),
-            sugar: Math.max(0, parseFloat(p.sugar) || 0),
-            sodium: Math.max(0, parseFloat(p.sodium) || 0),
-            potassium: Math.max(0, parseFloat(p.potassium) || 0),
-            vitaminC: Math.max(0, parseFloat(p.vitaminC) || 0),
-            vitaminD: Math.max(0, parseFloat(p.vitaminD) || 0),
-            calcium: Math.max(0, parseFloat(p.calcium) || 0),
-            iron: Math.max(0, parseFloat(p.iron) || 0),
-            notes: p.notes ? String(p.notes).trim() : null,
-          };
+    // Step 2: If Gemini emitted tool calls, dispatch them through mealTools (the secure middleware)
+    if (toolCalls && toolCalls.length > 0) {
+      const toolResults = [];
 
-          const entry = await prisma.foodEntry.create({ data: cleanData });
-          executedEntries.push(entry);
-          stateChanged = true;
-          console.log(`✅ [Chat AI] Automatically logged entry: "${entry.foodName}" in ${entry.mealType} (${entry.calories} kcal) for user ${userId}`);
-        } catch (err) {
-          console.error('❌ [Chat AI] Failed to log entry from action:', err.message);
-        }
-      } else if (action.type === 'SET_GOAL') {
+      for (const call of toolCalls) {
+        console.log(`[Chat] Dispatching tool: ${call.name}`, JSON.stringify(call.args));
         try {
-          const p = action.payload || {};
-          if (p.dailyCalories && Number(p.dailyCalories) > 0) {
-            const goalData = {
-              userId,
-              dailyCalories: parseFloat(p.dailyCalories),
-              proteinG: Math.max(0, parseFloat(p.proteinG) || 0),
-              carbsG: Math.max(0, parseFloat(p.carbsG) || 0),
-              fatG: Math.max(0, parseFloat(p.fatG) || 0),
-              weightGoalKg: p.weightGoalKg ? parseFloat(p.weightGoalKg) : null,
-              notes: p.notes ? String(p.notes).trim() : 'Updated via AI Chat',
-            };
-            const updatedGoal = await prisma.goal.create({ data: goalData });
+          const result = await dispatchTool(call.name, call.args, userId);
+          toolResults.push({ name: call.name, result });
+          executedResults.push({ tool: call.name, ...result });
+
+          // Any write tool marks state as changed (for cache invalidation)
+          if (['logMeal', 'setGoal', 'deleteMeal'].includes(call.name) && result.success) {
             stateChanged = true;
-            console.log(`🎯 [Chat AI] Automatically updated goal: ${updatedGoal.dailyCalories} kcal for user ${userId}`);
           }
         } catch (err) {
-          console.error('❌ [Chat AI] Failed to set goal from action:', err.message);
+          console.error(`[Chat] Tool ${call.name} threw:`, err.message);
+          toolResults.push({ name: call.name, result: { success: false, error: err.message } });
         }
-      } else if (action.type === 'DELETE_ENTRY') {
-        try {
-          const p = action.payload || {};
-          const whereClause = { userId };
-          if (p.id) {
-            whereClause.id = p.id;
-          } else if (p.foodName) {
-            whereClause.foodName = { contains: p.foodName.trim(), mode: 'insensitive' };
-            whereClause.date = todayString();
-          }
-          const target = await prisma.foodEntry.findFirst({
-            where: whereClause,
-            orderBy: { createdAt: 'desc' },
-          });
-          if (target) {
-            await prisma.foodEntry.delete({ where: { id: target.id } });
-            stateChanged = true;
-            console.log(`🗑️ [Chat AI] Automatically deleted food entry: "${target.foodName}" for user ${userId}`);
-          }
-        } catch (err) {
-          console.error('❌ [Chat AI] Failed to delete entry from action:', err.message);
-        }
+      }
+
+      // Step 3: Send tool results back to Gemini for the final human-readable reply
+      try {
+        finalResponse = await sendToolResults(
+          history.map((m) => ({ role: m.role, content: m.content })),
+          message,
+          toolResults,
+          { goalSummary }
+        );
+      } catch (err) {
+        // If sendToolResults fails, fall back to the initial response or a generic message
+        console.warn('[Chat] sendToolResults failed, using fallback response:', err.message);
+        finalResponse = initialResponse ||
+          executedResults.map((r) => r.message || '').filter(Boolean).join(' ') ||
+          'Done! Your request has been processed.';
       }
     }
 
@@ -511,25 +468,32 @@ const chat = async (req, res, next) => {
     }
 
     // Persist user message and AI response with staggered timestamps
-    // so user prompt is strictly timestamped before the assistant response
     const userCreatedAt = new Date();
     const assistantCreatedAt = new Date(userCreatedAt.getTime() + 100);
 
     await prisma.chatMessage.createMany({
       data: [
         { userId, role: 'user', content: message, createdAt: userCreatedAt },
-        { userId, role: 'assistant', content: aiResponse, actions, createdAt: assistantCreatedAt },
+        {
+          userId,
+          role: 'assistant',
+          content: finalResponse,
+          actions: toolCalls?.length ? toolCalls : null,
+          createdAt: assistantCreatedAt,
+        },
       ],
     });
 
     res.json({
       success: true,
-      data: { response: aiResponse, actions, executedEntries },
+      data: { response: finalResponse, executedResults },
     });
   } catch (error) {
+    console.error('[chat Error]:', error);
     next(error);
   }
 };
+
 
 /**
  * GET /api/ai/chat/history

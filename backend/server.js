@@ -73,18 +73,36 @@ app.use((req, res) => {
 // ── Central Error Handler (must be last) ─────────────────────────────────────
 app.use(errorHandler);
 
-// ── BullMQ Background Worker ──────────────────────────────────────────────────
-const { fileWorker } = require('./src/workers/fileWorker');
-const { fileQueue } = require('./src/queues/fileQueue');
+// ── BullMQ Background Worker (async init with Redis preflight) ───────────────
+const { initQueueConnection } = require('./src/config/queue');
+const { initFileWorker, getFileWorker } = require('./src/workers/fileWorker');
+const { initFileQueue, getFileQueue } = require('./src/queues/fileQueue');
+
+// ── Keep-Alive Cron Jobs ──────────────────────────────────────────────────────
+const { registerKeepAliveJobs } = require('./src/jobs/keepAliveJob');
 
 // ── Start Server ──────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`\n🚀 Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
   console.log(`📡 API: http://localhost:${PORT}/api/health`);
-  if (fileWorker) {
-    console.log(`🐂 BullMQ Worker active and listening for file processing jobs\n`);
-  }
+
+  // Initialize BullMQ asynchronously after server is already accepting requests.
+  // The Redis preflight prevents infinite [Worker Error] spam when Redis is down.
+  initQueueConnection().then((connection) => {
+    if (connection) {
+      initFileQueue(connection);
+      initFileWorker(connection);
+      console.log('🐂 BullMQ Worker active and listening for file processing jobs');
+    } else {
+      console.warn('⚠️  BullMQ disabled — file upload queuing unavailable (Redis unreachable).');
+    }
+  }).catch((err) => {
+    console.warn('⚠️  BullMQ init error:', err.message);
+  });
+
+  // Register keep-alive cron jobs (DB + Redis inactivity prevention)
+  registerKeepAliveJobs();
 });
 
 // ── Graceful Shutdown Handlers ────────────────────────────────────────────────
@@ -92,12 +110,14 @@ const shutdown = async (signal) => {
   console.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`);
   server.close(async () => {
     console.log('HTTP server closed.');
-    if (fileWorker) {
-      await fileWorker.close();
+    const worker = getFileWorker();
+    const queue = getFileQueue();
+    if (worker) {
+      await worker.close();
       console.log('BullMQ worker closed.');
     }
-    if (fileQueue) {
-      await fileQueue.close();
+    if (queue) {
+      await queue.close();
       console.log('BullMQ queue closed.');
     }
     process.exit(0);

@@ -1,7 +1,6 @@
 const { Worker } = require('bullmq');
 const pdfParse = require('pdf-parse');
 const prisma = require('../lib/prisma');
-const { createQueueConnection } = require('../config/queue');
 const { analyzeImage, parsePdfEntries } = require('../services/geminiService');
 const { setCache, invalidateUserCache, TTL } = require('../services/redisService');
 const { todayString } = require('../utils/helpers');
@@ -21,11 +20,17 @@ const downloadFileBuffer = async (url) => {
   return Buffer.from(arrayBuffer);
 };
 
-const connection = createQueueConnection();
-
 let fileWorker = null;
 
-if (connection) {
+/**
+ * Initialize the BullMQ file worker using an already-verified Redis connection.
+ * Must be called after initQueueConnection() resolves.
+ *
+ * @param {import('ioredis').Redis} connection - pre-tested ioredis connection
+ */
+const initFileWorker = (connection) => {
+  if (!connection) return;
+
   fileWorker = new Worker(
     'file-processing',
     async (job) => {
@@ -175,10 +180,13 @@ if (connection) {
   });
 
   fileWorker.on('error', (err) => {
+    // Suppress noisy DNS/connection errors — Redis was already confirmed reachable
+    if (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED') return;
     console.warn('[Worker Error]:', err.message);
   });
-}
+};
 
 module.exports = {
-  fileWorker,
+  initFileWorker,
+  getFileWorker: () => fileWorker,
 };

@@ -1,5 +1,6 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const fs = require('fs');
+const { TOOL_DECLARATIONS } = require('../tools/mealTools');
 
 let genAI;
 
@@ -74,7 +75,7 @@ If a value cannot be determined, use 0. Be as accurate as possible.`;
 
   for (const modelName of IMAGE_MODELS) {
     try {
-      console.log(`🤖 [analyzeImage] Trying model: ${modelName}`);
+      console.log(`[analyzeImage] Trying model: ${modelName}`);
       const model = getClient().getGenerativeModel({ model: modelName });
       const result = await model.generateContent([
         { inlineData: { mimeType, data: base64Image } },
@@ -82,12 +83,12 @@ If a value cannot be determined, use 0. Be as accurate as possible.`;
       ]);
       raw = result.response.text().trim();
       if (raw) {
-        console.log(`✅ [analyzeImage] Success with model: ${modelName}`);
+        console.log(`[analyzeImage] Success with model: ${modelName}`);
         break;
       }
     } catch (err) {
       lastErr = err;
-      console.warn(`⚠️ [analyzeImage] Model ${modelName} failed:`, err.message);
+      console.warn(`[analyzeImage] Model ${modelName} failed:`, err.message);
     }
   }
 
@@ -169,7 +170,7 @@ ${text.substring(0, 12000)}`;
       if (raw) break;
     } catch (err) {
       lastErr = err;
-      console.warn(`⚠️ [Gemini] Model ${modelName} failed in parsePdfEntries:`, err.message);
+      console.warn(`[Gemini] Model ${modelName} failed in parsePdfEntries:`, err.message);
     }
   }
 
@@ -188,7 +189,7 @@ ${text.substring(0, 12000)}`;
   try {
     entries = JSON.parse(jsonString);
   } catch (e) {
-    console.warn('⚠️ [Gemini] Direct JSON parse failed, text was:', raw.slice(0, 300));
+    console.warn(' [Gemini] Direct JSON parse failed, text was:', raw.slice(0, 300));
     if (raw.includes('[]')) return [];
     throw new Error('AI could not extract structured nutrition entries from this document.');
   }
@@ -209,15 +210,18 @@ ${text.substring(0, 12000)}`;
 };
 
 /**
- * Run a single conversational turn with Gemini given the full chat history.
+ * Run a single conversational turn with Gemini using the Function Calling API.
  *
- * @param {Array}  history   - Array of { role, content } objects
- * @param {string} userMsg   - Latest user message
- * @param {object} context   - { todayEntries, activeGoal } for grounding
- * @returns {string} Assistant response text
+ * Gemini emits structured function calls (not free-text ACTION blocks).
+ * The controller dispatches each call through mealTools.js — Gemini never
+ * touches the database directly.
+ *
+ * @param {Array}  history    - Array of { role, content } objects
+ * @param {string} userMsg    - Latest user message
+ * @param {object} context    - { goalSummary } — minimal context only (NO raw DB entries)
+ * @returns {{ response: string, toolCalls: Array }} Clean text + structured tool calls
  */
 const chatWithAI = async (history, userMsg, context = {}) => {
-  // Fallback model list — verified available via ListModels (newest first)
   const CHAT_MODELS = [
     'gemini-3.8-flash',
     'gemini-3.6-flash',
@@ -225,94 +229,146 @@ const chatWithAI = async (history, userMsg, context = {}) => {
     'gemini-2.5-flash',
   ];
 
-  const systemContext = `You are NutriBot, an intelligent, full-capability AI nutrition coach embedded in a personal calorie tracker app.
+  // System prompt: no raw DB data is injected here
+  const systemInstruction = `You are NutriBot, an intelligent AI nutrition coach in a personal calorie tracker app.
 
 Today's date: ${new Date().toISOString().split('T')[0]}
-User's active goal: ${context.activeGoal ? JSON.stringify(context.activeGoal) : 'Not set'}
-Today's logged entries: ${context.todayEntries?.length ? JSON.stringify(context.todayEntries) : 'None logged yet'}
+User's active goal: ${context.goalSummary || 'Not set'}
 
-YOU HAVE DIRECT ACCESS TO PERFORM ACTIONS IN THE APP VIA ACTION BLOCKS:
-1. LOGGING MEALS (CRITICAL):
-   Whenever the user asks to log, add, or eat food (e.g. "add protein bar to snacks", "logged 2 boiled eggs for breakfast", "ate a bowl of oatmeal with peanut butter"), you MUST emit a machine-readable ACTION:LOG_ENTRY block on its OWN line at the very END of your message:
-   ACTION:LOG_ENTRY:{"date":"YYYY-MM-DD","mealType":"breakfast|lunch|dinner|snacks","foodName":"...","quantity":1,"unit":"piece|g|serving|cup|bar|slice","calories":200,"protein":20,"carbs":25,"fat":5}
+You have access to four tools:
+- logMeal: call when the user wants to log food they ate
+- setGoal: call when the user wants to set/update their daily calorie or macro goal
+- deleteMeal: call when the user wants to delete/remove a logged meal
+- queryEntries: call when the user asks what they have eaten, calorie count, remaining calories, or any summary of their food log
 
-   CRITICAL RULES FOR mealType:
-   - Must be EXACTLY ONE OF: "breakfast", "lunch", "dinner", "snacks" (always lowercase, always "snacks" with an 's'!).
-   - If the user specifies "snack" or "snacks", use "snacks".
-   - Estimate realistic calories, protein (g), carbs (g), and fat (g) if the user did not specify exact numbers.
+IMPORTANT:
+- Always call queryEntries first if you need to know what the user has logged before answering.
+- After a tool call you will receive the result; use it to give a warm, helpful, human-readable reply.
+- Never invent or assume database values — always use tool results.
+- Format replies with emojis, bullet points, and bold text. Be concise and encouraging.`;
 
-2. SETTING OR UPDATING HEALTH GOALS:
-   When the user asks to set or change their target calories or macros (e.g. "set my daily goal to 2200 kcal with 150g protein"):
-   ACTION:SET_GOAL:{"dailyCalories":2200,"proteinG":150,"carbsG":200,"fatG":60}
-
-3. DELETING MEALS:
-   When the user asks to delete or remove an entry from today (e.g. "remove the protein bar", "delete lunch"):
-   ACTION:DELETE_ENTRY:{"id":"entry_id_if_known","foodName":"Protein Bar","mealType":"snacks"}
-
-FORMATTING GUIDELINES:
-- Format your visible reply cleanly with emojis, bullet points, and bold text.
-- NEVER show the ACTION: lines or raw JSON in your visible explanation. They are machine instructions that the server parses and strips out.
-- In your visible reply, confirm naturally and warmly: what was logged, the estimated calories and macros, and how many calories remain today if the user has an active goal.
-- Be encouraging, accurate, and concise.`;
-
-  // Build chat history for Gemini
+  // Build Gemini-format chat history
   const chatHistory = history.map((msg) => ({
     role: msg.role === 'assistant' ? 'model' : 'user',
     parts: [{ text: msg.content }],
   }));
 
-  let raw = '';
+  // Convert TOOL_DECLARATIONS to Gemini SDK format
+  const tools = [{ functionDeclarations: TOOL_DECLARATIONS }];
+
   let lastErr = null;
 
   for (const modelName of CHAT_MODELS) {
     try {
-      console.log(`🤖 [chatWithAI] Trying model: ${modelName}`);
-      const model = getClient().getGenerativeModel({ model: modelName });
-      const chat = model.startChat({
-        history: [
-          { role: 'user', parts: [{ text: systemContext }] },
-          { role: 'model', parts: [{ text: 'Understood! I am NutriBot and ready to assist you with meal logging, goals, and nutrition tracking.' }] },
-          ...chatHistory,
-        ],
+      console.log(` [chatWithAI] Trying model: ${modelName}`);
+      const model = getClient().getGenerativeModel({
+        model: modelName,
+        systemInstruction,
+        tools,
       });
+
+      const chat = model.startChat({ history: chatHistory });
       const result = await chat.sendMessage(userMsg);
-      raw = result.response.text();
-      if (raw) {
-        console.log(`✅ [chatWithAI] Success with model: ${modelName}`);
-        break;
+      const response = result.response;
+
+      // Extract function calls (structured tool calls from Gemini)
+      const toolCalls = [];
+      const candidates = response.candidates || [];
+      for (const candidate of candidates) {
+        const parts = candidate.content?.parts || [];
+        for (const part of parts) {
+          if (part.functionCall) {
+            toolCalls.push({
+              name: part.functionCall.name,
+              args: part.functionCall.args || {},
+            });
+          }
+        }
       }
+
+      // Extract visible text response
+      let responseText = '';
+      try { responseText = response.text(); } catch (_) {}
+
+      console.log(`[chatWithAI] Success with model: ${modelName} | toolCalls: ${toolCalls.length}`);
+      return { response: responseText.trim(), toolCalls };
     } catch (err) {
       lastErr = err;
-      console.warn(`⚠️ [chatWithAI] Model ${modelName} failed:`, err.message);
+      console.warn(`[chatWithAI] Model ${modelName} failed:`, err.message);
     }
   }
 
-  if (!raw && lastErr) throw lastErr;
-  if (!raw) throw new Error('All Gemini models returned empty response for chat.');
-
-  // Extract ACTION blocks BEFORE stripping them from the visible text
-  const actions = [];
-  // Matches ACTION:TYPE:{...} with flexible whitespace and multiline support
-  const actionRegex = /ACTION:\s*([A-Z_]+)\s*:\s*(\{[\s\S]*?\})/g;
-  let match;
-  while ((match = actionRegex.exec(raw)) !== null) {
-    try {
-      const parsed = JSON.parse(match[2]);
-      actions.push({ type: match[1].trim(), payload: parsed });
-    } catch (_) { /* ignore malformed action */ }
-  }
-
-  // Strip ACTION lines so the user never sees them
-  const response = raw
-    .split('\n')
-    .filter((line) => {
-      const trimmed = line.trim();
-      return !trimmed.startsWith('ACTION:') && !trimmed.startsWith('```ACTION:');
-    })
-    .join('\n')
-    .trim();
-
-  return { response, actions };
+  if (lastErr) throw lastErr;
+  throw new Error('All Gemini models returned empty response for chat.');
 };
 
-module.exports = { analyzeImage, parsePdfEntries, chatWithAI };
+/**
+ * Send tool results back to Gemini so it can generate the final user-facing reply.
+ *
+ * @param {Array}  history      - Chat history (Gemini format)
+ * @param {string} userMsg      - Original user message
+ * @param {Array}  toolResults  - Array of { name, result } tool results
+ * @param {object} context      - { goalSummary }
+ * @returns {string} Final assistant reply text
+ */
+const sendToolResults = async (history, userMsg, toolResults, context = {}) => {
+  const CHAT_MODELS = [
+    'gemini-3.8-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-2.5-flash',
+  ];
+
+  const systemInstruction = `You are NutriBot, an intelligent AI nutrition coach in a personal calorie tracker app.
+
+Today's date: ${new Date().toISOString().split('T')[0]}
+User's active goal: ${context.goalSummary || 'Not set'}
+
+You have just received tool results. Use them to write a warm, helpful, human-readable reply.
+Format replies with emojis, bullet points, and bold text. Be concise and encouraging.`;
+
+  const chatHistory = history.map((msg) => ({
+    role: msg.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: msg.content }],
+  }));
+
+  const tools = [{ functionDeclarations: TOOL_DECLARATIONS }];
+
+  let lastErr = null;
+
+  for (const modelName of CHAT_MODELS) {
+    try {
+      const model = getClient().getGenerativeModel({
+        model: modelName,
+        systemInstruction,
+        tools,
+      });
+
+      const chat = model.startChat({ history: chatHistory });
+
+      // First send the original user message to get the function call turn
+      await chat.sendMessage(userMsg);
+
+      // Then send tool results as functionResponse parts
+      const functionResponseParts = toolResults.map(({ name, result }) => ({
+        functionResponse: { name, response: result },
+      }));
+
+      const finalResult = await chat.sendMessage(functionResponseParts);
+      const finalText = finalResult.response.text();
+
+      if (finalText) {
+        console.log(`[sendToolResults] Final reply generated with model: ${modelName}`);
+        return finalText.trim();
+      }
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[sendToolResults] Model ${modelName} failed:`, err.message);
+    }
+  }
+
+  if (lastErr) throw lastErr;
+  throw new Error('All Gemini models failed to generate final reply after tool results.');
+};
+
+module.exports = { analyzeImage, parsePdfEntries, chatWithAI, sendToolResults };

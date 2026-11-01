@@ -6,9 +6,9 @@ const prisma = require('../lib/prisma');
 const connectDB = async () => {
   try {
     await prisma.$connect();
-    console.log('✅ Database connected via Prisma');
+    console.log('Database connected via Prisma');
   } catch (error) {
-    console.error(`❌ Database connection error: ${error.message}`);
+    console.error(`Database connection error: ${error.message}`);
     process.exit(1);
   }
 };

@@ -245,8 +245,7 @@ export default function ChatPage() {
       const aiMsg = {
         role: 'assistant',
         content: data.data.response,
-        actions: data.data.actions,
-        executedEntries: data.data.executedEntries,
+        executedResults: data.data.executedResults,
         createdAt: new Date(now.getTime() + 100).toISOString(),
       };
       const finalMessages = [...updatedWithUser, aiMsg];
@@ -255,8 +254,9 @@ export default function ChatPage() {
         localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(finalMessages));
       } catch (_) { }
 
-      if (data.data.executedEntries?.length > 0) {
-        toast.success(`✅ Automatically logged ${data.data.executedEntries.length} meal item(s)!`);
+      const loggedItems = data.data.executedResults?.filter(r => r.tool === 'logMeal' && r.success) || [];
+      if (loggedItems.length > 0) {
+        toast.success(`✅ Automatically logged ${loggedItems.length} meal item(s)!`);
       }
     } catch (err) {
       const msg = getApiError(err);
@@ -585,7 +585,9 @@ export default function ChatPage() {
                           dangerouslySetInnerHTML={{ __html: renderFormattedMessage(msg.content) }}
                           style={{ wordBreak: 'break-word' }}
                         />
-                        {msg.executedEntries && msg.executedEntries.length > 0 && (
+                        {(() => {
+                          const loggedItems = (msg.executedResults || []).filter(r => r.tool === 'logMeal' && r.success);
+                          return loggedItems.length > 0 && (
                           <div style={{
                             marginTop: 14,
                             padding: '12px 16px',
@@ -608,7 +610,7 @@ export default function ChatPage() {
                                 View on Dashboard &rarr;
                               </Link>
                             </div>
-                            {msg.executedEntries.map((e, idx) => (
+                            {loggedItems.map((e, idx) => (
                               <div key={idx} style={{
                                 display: 'flex',
                                 alignItems: 'center',
@@ -622,7 +624,7 @@ export default function ChatPage() {
                                 gap: 6,
                               }}>
                                 <div style={{ fontWeight: 700, color: T.text }}>
-                                  {e.foodName} <span style={{ fontWeight: 500, color: T.muted, fontSize: 12 }}>({e.quantity} {e.unit} · {e.mealType})</span>
+                                  {e.foodName} <span style={{ fontWeight: 500, color: T.muted, fontSize: 12 }}>({e.mealType})</span>
                                 </div>
                                 <div style={{ fontSize: 12.5, fontWeight: 600, color: T.secondary }}>
                                   🔥 {e.calories} kcal · P: {e.protein}g · C: {e.carbs}g · F: {e.fat}g
@@ -630,7 +632,8 @@ export default function ChatPage() {
                               </div>
                             ))}
                           </div>
-                        )}
+                          );
+                        })()}
                       </>
                     )}
                   </div>

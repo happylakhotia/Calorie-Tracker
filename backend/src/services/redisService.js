@@ -3,15 +3,13 @@ const Redis = require('ioredis');
 let redisClient = null;
 let isRedisAvailable = false;
 
-/**
- * Initialize and return Redis client for Redis Cloud
- */
+//Initialize and return Redis client for Redis Cloud
 const getRedisClient = () => {
   if (redisClient) return redisClient;
 
   const redisUrl = process.env.REDIS_URL;
   if (!redisUrl || redisUrl === 'your_redis_cloud_url_here') {
-    console.warn('⚠️ REDIS_URL not configured. Running without Redis Cloud cache.');
+    console.warn('REDIS_URL not configured. Running without Redis Cloud cache.');
     return null;
   }
 
@@ -20,9 +18,11 @@ const getRedisClient = () => {
       maxRetriesPerRequest: 2,
       enableReadyCheck: true,
       lazyConnect: true,
+      connectTimeout: 5000,       // 5 s connection timeout
+      commandTimeout: 5000,       // 5 s per-command timeout
       retryStrategy(times) {
         if (times > 3) {
-          console.warn('⚠️ Redis Cloud connection failed after 3 retries. Cache temporarily disabled.');
+          console.warn('Redis Cloud connection failed after 3 retries. Cache temporarily disabled.');
           isRedisAvailable = false;
           return null; // Stop retrying
         }
@@ -32,7 +32,7 @@ const getRedisClient = () => {
 
     redisClient.on('connect', () => {
       isRedisAvailable = true;
-      console.log('✅ Connected to Redis Cloud');
+      console.log('Connected to Redis Cloud');
     });
 
     redisClient.on('ready', () => {
@@ -41,7 +41,7 @@ const getRedisClient = () => {
 
     redisClient.on('error', (err) => {
       isRedisAvailable = false;
-      console.warn('⚠️ Redis Cloud Error:', err.message);
+      console.warn('Redis Cloud Error:', err.message);
     });
 
     redisClient.on('close', () => {
@@ -51,10 +51,10 @@ const getRedisClient = () => {
     // Initiate connection asynchronously
     redisClient.connect().catch((err) => {
       isRedisAvailable = false;
-      console.warn('⚠️ Failed to connect to Redis Cloud:', err.message);
+      console.warn('Failed to connect to Redis Cloud:', err.message);
     });
   } catch (err) {
-    console.warn('⚠️ Failed to create Redis client:', err.message);
+    console.warn('Failed to create Redis client:', err.message);
     redisClient = null;
     isRedisAvailable = false;
   }
@@ -65,14 +65,13 @@ const getRedisClient = () => {
 // Initialize connection on module load
 getRedisClient();
 
-/**
- * Standard TTL durations in seconds
- */
+// Standard TTL durations in seconds
 const TTL = {
   FILE_ANALYSIS: 60 * 60 * 24 * 30, // 30 days for Gemini file deduplication
   REPORTS: 60 * 30,                 // 30 minutes for aggregated reports
   TODAY_ENTRIES: 60 * 10,           // 10 minutes for today's summary
   GOALS: 60 * 60,                   // 1 hour for user nutrition goals
+  TOOL_CALL_CACHE: 60 * 60 * 24 * 7, // 7 days — cached tool calls (nutrition data) for repeat meal requests
 };
 
 /**
@@ -85,11 +84,14 @@ const getCache = async (key) => {
   if (!client || !isRedisAvailable) return null;
 
   try {
-    const data = await client.get(key);
+    const data = await Promise.race([
+      client.get(key),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ]);
     if (!data) return null;
     return JSON.parse(data);
   } catch (err) {
-    console.warn(`⚠️ Redis getCache error for key [${key}]:`, err.message);
+    console.warn(`Redis getCache error for key [${key}]:`, err.message);
     return null;
   }
 };
@@ -107,14 +109,16 @@ const setCache = async (key, value, ttlSeconds = TTL.REPORTS) => {
 
   try {
     const serialized = JSON.stringify(value);
-    if (ttlSeconds && ttlSeconds > 0) {
-      await client.set(key, serialized, 'EX', ttlSeconds);
-    } else {
-      await client.set(key, serialized);
-    }
+    const setOp = ttlSeconds && ttlSeconds > 0
+      ? client.set(key, serialized, 'EX', ttlSeconds)
+      : client.set(key, serialized);
+    await Promise.race([
+      setOp,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ]);
     return true;
   } catch (err) {
-    console.warn(`⚠️ Redis setCache error for key [${key}]:`, err.message);
+    console.warn(` Redis setCache error for key [${key}]:`, err.message);
     return false;
   }
 };
@@ -132,7 +136,7 @@ const deleteCache = async (key) => {
     await client.del(key);
     return true;
   } catch (err) {
-    console.warn(`⚠️ Redis deleteCache error for key [${key}]:`, err.message);
+    console.warn(` Redis deleteCache error for key [${key}]:`, err.message);
     return false;
   }
 };
@@ -162,7 +166,7 @@ const deleteCachePattern = async (pattern) => {
 
     return deletedCount;
   } catch (err) {
-    console.warn(`⚠️ Redis deleteCachePattern error for [${pattern}]:`, err.message);
+    console.warn(`Redis deleteCachePattern error for [${pattern}]:`, err.message);
     return 0;
   }
 };
@@ -172,17 +176,20 @@ const deleteCachePattern = async (pattern) => {
  * Called when underlying food entries or goals change.
  * @param {string} userId
  */
-const invalidateUserCache = async (userId) => {
+const invalidateUserCache = (userId) => {
   if (!userId) return;
-  try {
-    await Promise.all([
-      deleteCachePattern(`entries:*:${userId}*`),
-      deleteCachePattern(`reports:*:${userId}*`),
-      deleteCachePattern(`goals:*:${userId}*`),
-    ]);
-  } catch (err) {
-    console.warn(`⚠️ Redis invalidateUserCache error for user [${userId}]:`, err.message);
-  }
+  // Fire-and-forget: never block an HTTP request on cache invalidation
+  setImmediate(async () => {
+    try {
+      await Promise.all([
+        deleteCachePattern(`entries:*:${userId}*`),
+        deleteCachePattern(`reports:*:${userId}*`),
+        deleteCachePattern(`goals:*:${userId}*`),
+      ]);
+    } catch (err) {
+      console.warn(`Redis invalidateUserCache error for user [${userId}]:`, err.message);
+    }
+  });
 };
 
 module.exports = {
